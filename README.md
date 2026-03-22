@@ -4,8 +4,7 @@
 
 ![https://github.com/converged-computing/resource-secretary/blob/main/img/resource-secretary-small.png?raw=true](https://github.com/converged-computing/resource-secretary/blob/main/img/resource-secretary-small.png?raw=true)
 
-[![PyPI version](https://badge.fury.io/py/resource-secretary.svg)](https://badge.fury.io/py/resource-secretary)
-
+[![PyPI - Version](https://img.shields.io/pypi/v/resource-secretary)](https://badge.fury.io/py/resource-secretary)
 
 ## Design
 
