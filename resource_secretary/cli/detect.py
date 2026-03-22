@@ -74,9 +74,9 @@ def handle_detect(args):
         return
 
     # 3. Rich Output
-    header_text = "[bold cyan]Resource Secretary[/bold cyan] - [dim]System Audit[/dim]"
+    header_text = "[bold cyan]Resource Secretary[/bold cyan] - [dim]System Detect[/dim]"
     if args.category:
-        header_text += f" [yellow]({args.category.upper()})[/yellow]"
+        header_text += f" [yellow]({args.category.capitalize()})[/yellow]"
 
     console.print(Panel.fit(header_text, border_style="cyan"))
 
