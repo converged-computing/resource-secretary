@@ -1,0 +1,7 @@
+resource-secretary.egg-info
+build
+dist
+certs
+env
+.eggs
+__pycache__
