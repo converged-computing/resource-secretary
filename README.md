@@ -23,12 +23,12 @@ The interaction for [job negotiation](https://gist.github.com/vsoch/ba0fd119e12f
 
 The insight that I had is that these are different classes, and the classes need to work akin to mcp servers that provide tools, but the tools are functions. So for example this structure:
 
-```
+```console
 resource_secretary/providers/
 ├── container
 │   ├── charliecloud.py
-│   ├── shifter.py
 │   ├── oci.py          # includes docker and podman
+│   ├── shifter.py
 │   └── singularity.py  # includes podman and singularity
 ├── hardware
 │   ├── amd.py
@@ -39,7 +39,6 @@ resource_secretary/providers/
 ├── network
 │   ├── ethernet.py
 │   ├── infiniband.py
-│   ├── interconnect.py
 │   ├── network.py
 │   └── omnipath.py
 ├── parallel
@@ -57,9 +56,15 @@ resource_secretary/providers/
 │   ├── nfs.py
 │   └── storage.py
 └── workload
+    ├── cobalt.py
     ├── flux.py
     ├── kubernetes.py
-    └── slurm.py
+    ├── moab.py
+    ├── oar.py
+    ├── pbs.py
+    ├── slurm.py
+    ├── torque.py
+    └── workload.py
 ```
 
 We need to automatically detect all providers as type "software" or "workload" based on their base class, `BaseProvider`.
