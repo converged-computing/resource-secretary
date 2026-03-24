@@ -24,7 +24,7 @@ class OpenAIBackend:
 
     def generate_response(
         self,
-        messages: List[Dict[str, str]],
+        messages: List[Dict[str, Any]],
         tools: List[Dict[str, Any]] = None,
     ) -> Any:
         """
@@ -33,7 +33,6 @@ class OpenAIBackend:
         kwargs = {"model": self.model_name, "messages": messages}
         if tools:
             kwargs["tools"] = tools
-            kwargs["tool_choice"] = "auto"
 
         response = self.client.chat.completions.create(**kwargs)
         return response.choices[0].message
@@ -41,34 +40,19 @@ class OpenAIBackend:
     def extract_content_and_calls(self, message: Any) -> Tuple[str, List[Dict[str, Any]]]:
         """
         Extracts text and tool calls from an OpenAI message object.
+        No native tool calls in manual mode.
         """
-        content = message.content or ""
-        calls = []
-        if message.tool_calls:
-            for tc in message.tool_calls:
-                calls.append(
-                    {
-                        "id": tc.id,
-                        "name": tc.function.name,
-                        "args": json.loads(tc.function.arguments),
-                    }
-                )
-        return content, calls
+        return (message.content or ""), []
 
     def format_assistant_message(self, message: Any) -> Dict[str, Any]:
         """
         Converts the raw OpenAI message into a dict for history.
+        Parse the message.content into the response
         """
-        # OpenAI requires the exact message object or a specific dict format
-        return message.model_dump(exclude_none=True)
+        return {"role": "assistant", "content": message.content}
 
-    def format_tool_result(self, tool_call_id: str, name: str, result: Any) -> Dict[str, Any]:
+    def format_tool_result(self, tool_call_id: Any, name: str, result: Any) -> Dict[str, Any]:
         """
         Formats a tool execution result for OpenAI history.
         """
-        return {
-            "role": "tool",
-            "tool_call_id": tool_call_id,
-            "name": name,
-            "content": json.dumps(result) if not isinstance(result, str) else result,
-        }
+        return {"role": "user", "content": f"OBSERVATION from {name}:\n{result}"}
