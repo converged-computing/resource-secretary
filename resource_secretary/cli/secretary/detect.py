@@ -16,6 +16,7 @@ def handle_detect(args):
     Implementation of the 'detect' subcommand.
     Supports filtering by category and specific provider name.
     """
+    # For detect, we just want secretary tools
     catalog = discover_providers()
 
     # 1. Apply Filtering Logic
@@ -63,7 +64,11 @@ def handle_detect(args):
             for inst in instances:
                 tools_meta = inst.discover_tools()
                 serializable_tools = {
-                    name: {"description": info["description"], "parameters": info["parameters"]}
+                    name: {
+                        "description": info["description"],
+                        "parameters": info["parameters"],
+                        "category": info["category"],
+                    }
                     for name, info in tools_meta.items()
                 }
                 output[category][inst.name] = {

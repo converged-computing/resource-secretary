@@ -3,9 +3,9 @@ import inspect
 from typing import Any, Callable, Dict, Optional
 
 
-def secretary_tool(func: Callable):
+def _base_tool_decorator(func: Callable, category: str):
     """
-    Wrapper for secretary tool! We can add this to provider functions to label
+    Wrapper for a base tool. We can add this to provider functions to label
     them as tools that a secretary agent should be able to call to discover
     stuff.
     """
@@ -14,30 +14,57 @@ def secretary_tool(func: Callable):
     def wrapper(*args, **kwargs):
         return func(*args, **kwargs)
 
-    # Force doc to string immediately
-    doc = func.__doc__
-    wrapper.is_secretary_tool = True
-    wrapper.tool_name = str(func.__name__)
-    wrapper.tool_doc = str(doc) if isinstance(doc, str) else "No description."
+    # Attach categorical metadata
+    wrapper.is_tool = True
+    # Right now this can be secretary or dispatch
+    wrapper.tool_category = category
 
+    # Force metadata to basic types to avoid proxy/object issues
+    wrapper.tool_name = str(func.__name__)
+    doc = func.__doc__
+    wrapper.tool_doc = str(doc).strip() if isinstance(doc, str) else "No description."
+
+    # Parse arguments for the tool manifest
     sig = inspect.signature(func)
     args_manifest = {}
     for name, param in sig.parameters.items():
         if name == "self":
             continue
 
-        # Map types to strings
+        # Extract type name safely, handling Annotated or standard types
         ptype = "string"
-        if param.annotation != inspect.Parameter.empty:
-            ptype = getattr(param.annotation, "__name__", "string")
+        annotation = param.annotation
+        if annotation != inspect.Parameter.empty:
+            # Handle Annotated[type, metadata]
+            if hasattr(annotation, "__origin__"):
+                ptype = getattr(annotation.__origin__, "__name__", str(annotation.__origin__))
+            else:
+                ptype = getattr(annotation, "__name__", str(annotation))
 
         args_manifest[str(name)] = {
-            "type": str(ptype),
+            "type": str(ptype).lower(),
             "required": param.default == inspect.Parameter.empty,
         }
 
     wrapper.tool_args = args_manifest
     return wrapper
+
+
+def secretary_tool(func: Callable):
+    """
+    Labels a method as a tool for discovery and status retrieval.
+    Used by the secretary agent primarily. We don't want the secretary to make
+    system changes, it's like read only.
+    """
+    return _base_tool_decorator(func, "secretary")
+
+
+def dispatch_tool(func: Callable):
+    """
+    Labels a method as a tool for actions and state changes.
+    Used by the dispatcher agent to actually interact with a system (submit, cancel, etc).
+    """
+    return _base_tool_decorator(func, "dispatch")
 
 
 class BaseProvider:
@@ -66,22 +93,31 @@ class BaseProvider:
     def metadata(self) -> Dict[str, Any]:
         return {}
 
-    def discover_tools(self) -> Dict[str, Dict[str, Any]]:
+    def discover_tools(
+        self, tool_types: list = ["secretary", "dispatch"]
+    ) -> Dict[str, Dict[str, Any]]:
         """
-        Scans methods and strictly validates metadata types to avoid flux proxy junk.
-        """
-        import inspect
+        Scans provider methods for tool decorators matching the specified tool_type.
 
+        Args:
+            tool_type: The category of tools to discover.
+                       Defaults to "secretary" (observation/read-only).
+                       Set to "dispatch" for action/write tools.
+
+        Returns:
+            Dict mapping tool names to their manifest (description, parameters, handler).
+        """
         tool_manifest = {}
 
         for attr_name, attr in inspect.getmembers(self, predicate=inspect.ismethod):
-            # 1. Use getattr safely
-            is_tool = getattr(attr, "is_secretary_tool", False)
-            if is_tool is not True:
+            # Filter down to tools in the category we want
+            if not getattr(attr, "is_tool", False):
+                continue
+            tool_category = getattr(attr, "tool_category", None)
+            if tool_category not in tool_types:
                 continue
 
-            # Fetch the values and check if they are the correct Python types.
-            # If Flux returns an ErrorPrinter, isinstance(x, dict) will be False.
+            # Safely extract and validate manifest data
             raw_args = getattr(attr, "tool_args", None)
             args = raw_args if isinstance(raw_args, dict) else {}
 
@@ -90,7 +126,14 @@ class BaseProvider:
 
             t_name = str(getattr(attr, "tool_name", attr_name))
 
-            tool_manifest[t_name] = {"description": doc, "parameters": args, "handler": attr}
+            tool_manifest[t_name] = {
+                "description": doc,
+                "category": tool_category,
+                "parameters": args,
+                "handler": attr,
+            }
+
+            # Cache the actual callable in the tools map
             self.tools[t_name] = attr
 
         return tool_manifest
