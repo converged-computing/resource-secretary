@@ -1,8 +1,8 @@
 import argparse
 import sys
 
-from resource_secretary.cli.detect import handle_detect
-from resource_secretary.cli.providers import handle_list_providers
+from resource_secretary.cli.secretary.detect import handle_detect
+from resource_secretary.cli.secretary.providers import handle_list_providers
 
 
 def main():

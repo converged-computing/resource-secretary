@@ -4,6 +4,8 @@ import os
 import pkgutil
 from typing import Dict, List
 
+from rich import print
+
 from .provider import BaseProvider
 
 
@@ -19,15 +21,16 @@ def find_provider_classes():
             category_path = [entry.path]
             full_category_path = f"{__name__}.{category}"
 
-            for loader, mod_name, is_pkg in pkgutil.walk_packages(
-                category_path, f"{full_category_path}."
-            ):
+            # loader, mod_name, is_pkg
+            for _, mod_name, _ in pkgutil.walk_packages(category_path, f"{full_category_path}."):
                 module = importlib.import_module(mod_name)
-                for name, obj in inspect.getmembers(module, inspect.isclass):
+
+                # name, obj
+                for _, obj in inspect.getmembers(module, inspect.isclass):
                     # Filter to ensure we only get valid leaf classes:
                     # 1. Must be a subclass of BaseProvider
-                    # 2. Must NOT be the BaseProvider class itself (to avoid probe() errors)
-                    # 3. Must have is_provider set to True (the default)
+                    # 2. Must NOT be the BaseProvider class itself (to avoid probe errors)
+                    # 3. Must have is_provider set to True (default)
                     if (
                         issubclass(obj, BaseProvider)
                         and obj is not BaseProvider
@@ -48,6 +51,7 @@ def discover_providers() -> Dict[str, List[BaseProvider]]:
     }
     """
     catalog = {}
+    names = {}
     for category, cls in find_provider_classes():
         # Wrap in try-except to skip any intermediate logic classes
         # that might have accidentally left is_provider=True
@@ -60,7 +64,6 @@ def discover_providers() -> Dict[str, List[BaseProvider]]:
                 catalog[category].append(instance)
         except (NotImplementedError, TypeError):
             continue
-
     return catalog
 
 
