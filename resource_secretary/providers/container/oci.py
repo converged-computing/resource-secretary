@@ -42,6 +42,8 @@ class DockerProvider(OCIProvider):
     Provider for Docker
     """
 
+    is_provider = True
+
     @property
     def name(self) -> str:
         return "docker"
@@ -59,6 +61,8 @@ class PodmanProvider(OCIProvider):
     """
     Provider for Podman
     """
+
+    is_provider = True
 
     @property
     def name(self) -> str:

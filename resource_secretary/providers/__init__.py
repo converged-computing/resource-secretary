@@ -2,9 +2,8 @@ import importlib
 import inspect
 import os
 import pkgutil
+import re
 from typing import Dict, List
-
-from rich import print
 
 from .provider import BaseProvider
 
@@ -16,7 +15,8 @@ def find_provider_classes():
     """
     pkg_path = os.path.dirname(__file__)
     for entry in os.scandir(pkg_path):
-        if entry.is_dir() and not entry.name.startswith("__"):
+        # Don't include hidden or mock
+        if entry.is_dir() and not re.search("(__|mock)", entry.name):
             category = entry.name
             category_path = [entry.path]
             full_category_path = f"{__name__}.{category}"
