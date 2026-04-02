@@ -17,7 +17,9 @@ class GPUProviderBase(BaseProvider):
         self.bin_path: Optional[str] = None
 
     def run_smi_cmd(self, args: List[str]) -> str:
-        """Executes a vendor SMI tool directly."""
+        """
+        Executes a vendor SMI tool directly.
+        """
         if not self.bin_path:
             return "Error: SMI tool not found."
         try:

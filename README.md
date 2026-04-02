@@ -46,6 +46,7 @@ resource_secretary/providers/
 │   └── spectrum.py
 ├── provider.py
 ├── software
+│   ├── conda.py
 │   ├── modules.py      # includes lmod and environment modules
 │   └── spack.py
 ├── storage

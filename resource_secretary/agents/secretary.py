@@ -18,13 +18,18 @@ class SecretaryAgent:
     and then receive a job work request and ask the providers (functions calls) for more information.
     It will return (we hope) an honest response about the cluster ability to receive the job based
     on the user criteria.
+
+    When started in verbose, this will record (save) all interactions, and return to the server hub.
+    This is intended for experimental mode or when you want to better understand interactions.
     """
 
-    def __init__(self, providers: List[Any] = None):
+    def __init__(self, providers: List[Any] = None, verbose=False):
         self.providers = providers or []
         self.backend = get_backend()
         self.history = []
+        self.calls = []
         self.provider_map = {p.name: p for p in self.providers}
+        self.verbose = verbose
 
     def build_system_context(self, tool_types) -> str:
         """
@@ -94,7 +99,9 @@ class SecretaryAgent:
             console.print(f"  [bold red]❌ Error:[/bold red] {str(e)}")
             return f"Error: {str(e)}"
 
-    async def deliberate(self, request: str, instructions: str) -> str:
+    async def deliberate(
+        self, request: str, instructions: str, required_obs=0, max_attempts=10
+    ) -> str:
         """
         Deliberate can be a negotiation or a selection (prompt is an argument)
         """
@@ -102,10 +109,16 @@ class SecretaryAgent:
             {"role": "system", "content": instructions},
             {"role": "user", "content": f"Request: {request}"},
         ]
+        self.calls = []
 
-        for i in range(10):
+        # Require the agent to make observations?
+        obs_count = 0
+        print(f"Observations required: {required_obs}")
+
+        for i in range(max_attempts):
             console.print(f"\n[bold magenta]Iteration {i}:[/bold magenta] Asking LLM...")
 
+            # Since "tool calls" are local functions, they are in the text response
             raw_response = self.backend.generate_response(self.history)
             content, _ = self.backend.extract_content_and_calls(raw_response)
 
@@ -119,7 +132,22 @@ class SecretaryAgent:
 
             if not calls:
                 if "FINAL PROPOSAL:" in content or "FINAL RESULT:" in content:
+
+                    # In practice, zero calls often doesn't make sense, but depends on function.
+                    if obs_count < required_obs:
+                        print("NOT REQUIRED CALLS")
+                        self.history.append(
+                            {
+                                "role": "user",
+                                "content": "You are required to make at least one CALL",
+                            }
+                        )
+                        continue
+
                     console.print("[bold green]✅ Proposal Received.[/bold green]")
+                    if self.verbose:
+                        content += f"\nCALLS\n```json\n{json.dumps(self.calls)}\n```"
+                    print(content)
                     return content
 
                 self.history.append(
@@ -136,8 +164,10 @@ class SecretaryAgent:
                     args[k] = v
 
                 result = self.execute_call(p_name, f_name, args)
+                self.calls.append({"provider": p_name, "function": f_name, "args": args})
                 obs += f"- {p_name}.{f_name}: {result}\n"
                 console.print(Panel(result, title=f"☎️ Call {f_name}: {args}", border_style="blue"))
+                obs_count += 1
 
             self.history.append({"role": "user", "content": obs})
 
@@ -182,7 +212,8 @@ class SecretaryAgent:
             "}\n"
             "```"
         )
-        return await self.deliberate(f"EXECUTE REQUEST: {request}", instructions)
+        # Require at least 2 calls - submit and info
+        return await self.deliberate(f"EXECUTE REQUEST: {request}", instructions, 2)
 
     async def select(self, request: str, proposals: Dict[str, Any]) -> str:
         """
@@ -267,4 +298,5 @@ class SecretaryAgent:
             "}\n"
             "```"
         )
-        return await self.deliberate(request, instructions)
+        # Require at least 3 calls, and max 15 loops of thinking
+        return await self.deliberate(request, instructions, 3, 15)
