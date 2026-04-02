@@ -17,13 +17,17 @@ class AmdGPUProvider(GPUProviderBase):
         return "amd-gpu"
 
     def probe(self) -> bool:
-        """Checks for the presence of rocm-smi."""
+        """
+        Checks for the presence of rocm-smi.
+        """
         self.bin_path = shutil.which("rocm-smi")
         return self.bin_path is not None
 
     @property
     def metadata(self) -> Dict[str, Any]:
-        """Returns hardware info for AMD GPUs."""
+        """
+        Returns hardware info for AMD GPUs.
+        """
         return {"vendor": "amd", "bin_path": self.bin_path}
 
     @secretary_tool

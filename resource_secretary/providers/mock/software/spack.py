@@ -67,8 +67,6 @@ class MockSpackProvider(MockBaseProvider):
     Volatility: High (0.4) - Softare stacks vary wildly between systems.
     """
 
-    name = "spack"
-
     def __init__(self, config):
         super().__init__(config)
         self.packages: List[Dict[str, Any]] = []
@@ -76,6 +74,10 @@ class MockSpackProvider(MockBaseProvider):
         self.version = "unknown"
         self.arch = "unknown"
         self.available = False
+
+    @property
+    def name(self) -> str:
+        return "spack"
 
     def probe(self) -> bool:
         """

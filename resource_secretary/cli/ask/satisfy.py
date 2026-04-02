@@ -11,6 +11,21 @@ from resource_secretary.algorithm.select.base import WorkerVerdict
 console = Console()
 
 
+def format_calls(calls_block):
+    """
+    Try to format calls.
+    """
+    content = ""
+    try:
+        calls = json.loads(utils.extract_code_block(calls_block))
+    except:
+        return content
+    for call in calls:
+        args = ", ".join([f"{x[0]}={x[1]}" for x in call["args"].items()])
+        content += f"\n  {call['provider']}.{call['function']}({args})"
+    return content
+
+
 async def handle_satisfy(args):
     """
     Queries the fleet and displays detailed status without selecting or dispatching.
@@ -65,8 +80,13 @@ async def handle_satisfy(args):
             ets_display = "N/A"
 
             try:
-                json_block = utils.extract_code_block(raw_proposal)
-                parsed = json.loads(json_block)
+                # Were calls returned?
+                calls = []
+                if "CALLS" in raw_proposal:
+                    raw_proposal, calls_block = raw_proposal.split("CALLS")
+                    calls = format_calls(calls_block)
+
+                parsed = parsed = json.loads(utils.extract_code_block(raw_proposal))
 
                 verdict = parsed.get("verdict", "UNKNOWN")
                 reasoning = parsed.get("reasoning", reasoning)
@@ -92,6 +112,8 @@ async def handle_satisfy(args):
                 "INCOMPATIBLE": "[dim red]INCOMPATIBLE[/dim red]",
             }.get(verdict, f"[white]{verdict}[/white]")
 
+            if calls:
+                reasoning += f"\n{calls}"
             table.add_row(wid, verdict_style, ets_display, reasoning)
 
         console.print(table)
