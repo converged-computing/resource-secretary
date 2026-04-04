@@ -1,5 +1,4 @@
 import random
-from typing import Any, Dict, List
 
 
 class BaseArchetype:
@@ -63,7 +62,12 @@ class HPCArchetype(BaseArchetype):
         "storage": {
             "min": 1,
             "max": 2,
-            "choices": ["MockLustreProvider", "MockNFSProvider", "MockBeeGFSProvider"],
+            "choices": ["MockLustreProvider", "MockNFSProvider"],
+        },
+        "container": {
+            "min": 0,
+            "max": 2,
+            "choices": ["MockSingularityProvider", "MockPodmanProvider"],
         },
         "network": {
             "min": 1,
@@ -92,10 +96,11 @@ class CloudArchetype(BaseArchetype):
 
     slots = {
         "workload": {"min": 1, "max": 1, "choices": ["MockKubernetesProvider"]},
-        "software": {"min": 1, "max": 2, "choices": ["MockCondaProvider", "MockPipProvider"]},
+        "software": {"min": 1, "max": 2, "choices": ["MockCondaProvider"]},
         "storage": {"min": 1, "max": 2, "choices": ["MockS3Provider", "MockNFSProvider"]},
         "network": {"min": 1, "max": 1, "choices": ["MockEthernetProvider"]},
         "hardware": {"min": 1, "max": 1, "choices": ["MockHardwareProvider"]},
+        "container": {"min": 0, "max": 1, "choices": ["MockDockerProvider"]},
     }
 
 
@@ -112,10 +117,16 @@ class StandaloneArchetype(BaseArchetype):
         "storage_gb": (100, 2000),
     }
 
-    # Cardinality for each type
+    # Cardinality for each type.
     slots = {
-        "software": {"min": 0, "max": 2, "choices": ["MockCondaProvider", "MockPipProvider"]},
+        "workload": {"min": 1, "max": 1, "choices": ["MockMachineProvider"]},
+        "software": {"min": 1, "max": 2, "choices": ["MockCondaProvider", "MockSpackProvider"]},
         "storage": {"min": 1, "max": 1, "choices": ["MockLocalScratchProvider"]},
         "hardware": {"min": 1, "max": 1, "choices": ["MockHardwareProvider"]},
         "network": {"min": 1, "max": 1, "choices": ["MockEthernetProvider"]},
+        "container": {
+            "min": 0,
+            "max": 2,
+            "choices": ["MockDockerProvider", "MockSingularityProvider"],
+        },
     }

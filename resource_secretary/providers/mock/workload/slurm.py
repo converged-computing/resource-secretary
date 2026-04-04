@@ -6,15 +6,12 @@ from ..base import MockBaseProvider
 
 
 class MockSlurmProvider(MockBaseProvider):
-    """
-    Slurm Workload Manager.
-    Scale Anchor: Node counts.
-    Density Anchor: Partition variety and Queue pressure.
-    """
-
     def __init__(self, config):
         super().__init__(config)
         self.node_count = 0
+        self.idle_nodes = 0
+        self.busy_nodes = 0
+        self.cores_per_node = 0
         self.partitions = []
         self._jobs = []
         self.available = False
@@ -26,87 +23,112 @@ class MockSlurmProvider(MockBaseProvider):
     def probe(self) -> bool:
         rng = self.config.get_rng("slurm")
 
-        # Nodes and partitions
+        # 1. Physical Capacity
         self.node_count = self.generate("nodes", mode="scale", volatility=0.05)
+        self.cores_per_node = self.generate("cpus_per_node", mode="scale")
+        self.total_cores = self.node_count * self.cores_per_node
+
+        # 2. Partition Variety (Density)
         partition_count = self.generate("partitions", mode="density", volatility=0.1)
         pool = ["compute", "gpu", "debug", "highmem", "long", "viz"]
         self.partitions = rng.sample(pool, k=min(partition_count, len(pool)))
 
-        # internal job state for squeue (sqweeee!)
-        num_jobs = int(self.node_count * self.config.targets["density"] * 0.5)
-        self._jobs = []
-        for i in range(num_jobs):
-            self._jobs.append(
-                {
-                    "id": 1000 + i,
-                    "user": rng.choice(["root", "user1", "researcher", "student"]),
-                    "state": rng.choice(["RUNNING", "PENDING", "PENDING"]),
-                    "time": f"{rng.randint(0, 23)}:{rng.randint(10, 59)}",
-                    "nodes": rng.randint(1, max(1, self.node_count // 10)),
-                }
-            )
+        # 3. Temporal State (The Pulse)
+        # Higher density target = higher utilization (busier system)
+        utilization = max(0.0, min(0.98, rng.gauss(self.config.targets["density"], 0.1)))
+
+        self.idle_nodes = int(self.node_count * (1.0 - utilization))
+        self.busy_nodes = self.node_count - self.idle_nodes
+        self.idle_cores = self.idle_nodes * self.cores_per_node
+
+        # 4. Generate the Job Queue based on busy nodes
+        self._set_jobs(rng, self.busy_nodes)
 
         self.available = True
         return True
 
-    @property
-    def metadata(self) -> Dict[str, Any]:
-        return {
-            "system_type": "slurm",
-            "partitions": self.partitions,
-            "has_srun": True,
-            "total_nodes": self.node_count,
-        }
+    def _set_jobs(self, rng, busy_nodes):
+        """
+        Generates faux jobs for busy nodes.
+        """
+        self._jobs = []
+        nodes_remaining = busy_nodes
+        job_id = 1000
+
+        while nodes_remaining > 0:
+            # Each job takes 1 to 10% of the cluster
+            job_size = rng.randint(1, max(1, self.node_count // 10))
+            job_size = min(job_size, nodes_remaining)
+
+            self._jobs.append(
+                {
+                    "id": job_id,
+                    "user": rng.choice(["root", "user1", "researcher", "student"]),
+                    "state": "RUNNING",
+                    "time": f"{rng.randint(0, 23)}:{rng.randint(10, 59)}",
+                    "nodes": job_size,
+                }
+            )
+            nodes_remaining -= job_size
+            job_id += 1
+
+        # Add some PENDING jobs for 'Queue Pressure'
+        num_pending = int(self.busy_nodes * 0.2)
+        for i in range(num_pending):
+            self._jobs.append(
+                {
+                    "id": job_id + i,
+                    "user": rng.choice(["user1", "researcher"]),
+                    "state": "PENDING",
+                    "time": "0:00",
+                    "nodes": rng.randint(1, 4),
+                }
+            )
 
     @secretary_tool
     def get_resource_info(self) -> str:
         """
-        sinfo -N -l: Returns node states and core availability.
+        sinfo -N -l: Slurm output for node states.
         """
-        # We simulate the header and row-based output of Slurm
-        header = "NODELIST   NODES   PARTITION       STATE CPUS    S:C:T MEMORY TMP_DISK WEIGHT FEATURES REASON"
+        header = "NODELIST   NODES   PARTITION       STATE CPUS    MEMORY    FEATURES REASON"
         lines = [header]
-
-        # We group nodes into chunks to keep the output readable but realistic
-        chunk_size = max(1, self.node_count // len(self.partitions))
-        for i, part in enumerate(self.partitions):
-            start = i * chunk_size
-            end = start + chunk_size
-            state = "allocated" if i % 2 == 0 else "idle"
-            # Fake the sinfo string format
+        # Summarize for the agent
+        lines.append(
+            f"node[001-{self.idle_nodes:03d}]  {self.idle_nodes}   {self.partitions[0]}  idle  {self.cores_per_node}  256000  none (null)"
+        )
+        if self.busy_nodes > 0:
             lines.append(
-                f"node[{start:03d}-{end:03d}]  {chunk_size}   {part:13} {state:7} 64      2:32:1 256000 0        1        (null) none"
+                f"node[{self.idle_nodes+1:03d}-{self.node_count:03d}]  {self.busy_nodes}   {self.partitions[0]}  alloc {self.cores_per_node}  256000  none (null)"
             )
-
         return "\n".join(lines)
 
     @secretary_tool
     def get_queue_status(self, user: Optional[str] = None) -> str:
         """
-        squeue: Returns the list of running and pending jobs.
+        squeue: list of jobs.
         """
         header = (
             f"{'JOBID':<8} {'PARTITION':<12} {'USER':<10} {'STATE':<10} {'TIME':<10} {'NODES':<5}"
         )
         lines = [header]
-
-        filtered_jobs = [j for j in self._jobs if not user or j["user"] == user]
-
-        # Show first 50 jobs to avoid massive context bloating
-        for j in filtered_jobs[:50]:
-            part = self.partitions[0]
+        filtered = [j for j in self._jobs if not user or j["user"] == user]
+        for j in filtered[:50]:
             lines.append(
-                f"{j['id']:<8} {part:<12} {j['user']:<10} {j['state']:<10} {j['time']:<10} {j['nodes']:<5}"
+                f"{j['id']:<8} {self.partitions[0]:<12} {j['user']:<10} {j['state']:<10} {j['time']:<10} {j['nodes']:<5}"
             )
-
-        if len(filtered_jobs) > 50:
-            lines.append(f"... and {len(filtered_jobs) - 50} more jobs.")
-
         return "\n".join(lines)
 
     def export_truth(self):
+        """
+        State of truth of cluster.
+        """
         return {
-            "node_count": self.node_count,
-            "partitions": self.partitions,
+            "total_nodes": self.node_count,
+            "idle_nodes": self.idle_nodes,
+            "busy_nodes": self.busy_nodes,
+            "cores_per_node": int(self.total_cores / self.node_count),
+            "total_cores": self.total_cores,
+            "idle_cores": self.idle_cores,
             "job_count": len(self._jobs),
+            "partitions": self.partitions,
         }

@@ -139,7 +139,9 @@ class MockModuleProvider(MockBaseProvider):
 
     @secretary_tool
     def get_module_details(self, module_name: str) -> str:
-        """Mock output of 'module spider' or 'module show'."""
+        """
+        Mock output of 'module spider' or 'module show'.
+        """
         # Find if the module exists in our truth
         found = False
         for cat_list in self._available_modules.values():
@@ -161,5 +163,7 @@ class MockModuleProvider(MockBaseProvider):
         )
 
     def export_truth(self) -> Dict[str, Any]:
-        """Ground Truth for accuracy calculation."""
+        """
+        Ground Truth for accuracy calculation.
+        """
         return {"type": self.module_type, "modules": self._available_modules}

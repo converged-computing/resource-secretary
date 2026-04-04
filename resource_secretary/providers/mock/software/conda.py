@@ -1,4 +1,3 @@
-import random
 from typing import Any, Dict, List
 
 from ...provider import secretary_tool
@@ -165,6 +164,7 @@ class MockCondaProvider(MockBaseProvider):
         return {
             "total_envs": len(self._envs),
             "environments": {
-                name: [p["name"] for p in d["packages"]] for name, d in self._envs.items()
+                name: [f'{p["name"]}@{p["version"]}' for p in d["packages"]]
+                for name, d in self._envs.items()
             },
         }

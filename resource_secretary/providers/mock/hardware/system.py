@@ -23,6 +23,10 @@ class MockHardwareProvider(MockBaseProvider):
         super().__init__(config)
         self.available = False
         self._state = {}
+        self.capability_tools = {
+            "compute": ["get_current_load", "get_available_memory", "check_instruction_support"],
+            "environment": ["get_gpu_utilization", "get_gpu_info"],
+        }
 
     @property
     def name(self) -> str:

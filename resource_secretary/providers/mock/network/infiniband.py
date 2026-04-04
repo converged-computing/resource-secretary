@@ -17,6 +17,7 @@ class MockInfiniBandProvider(MockBaseProvider):
         self._devices = []
         self._speed = "100 Gbps"
         self.available = False
+        self.capability_tools = {"network": ["get_port_status"]}
 
     @property
     def name(self) -> str:

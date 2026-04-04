@@ -1,6 +1,6 @@
 import os
 import shutil
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from ..provider import secretary_tool
 from .network import NetworkProvider

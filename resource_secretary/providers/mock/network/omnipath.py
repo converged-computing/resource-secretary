@@ -9,6 +9,11 @@ class MockOmniPathProvider(MockBaseProvider):
     Intel Omni-Path Fabric.
     """
 
+    def __init__(self, config):
+        super().__init__(config)
+        self.available = False
+        self.capability_tools = {"network": ["get_opa_details"]}
+
     def probe(self) -> bool:
         self.hfi_count = 1 if self.config.archetype.name == "hpc" else 0
         self.available = self.hfi_count > 0
