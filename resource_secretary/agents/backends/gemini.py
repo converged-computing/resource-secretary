@@ -25,6 +25,7 @@ class GeminiBackend:
 
     def generate_response(
         self,
+        # messages here are history
         messages: List[Dict[str, Any]],
         tools: List[Dict[str, Any]] = None,
     ) -> Any:
@@ -68,7 +69,6 @@ class GeminiBackend:
             config_kwargs["tools"] = gemini_tools
 
         config = self.types.GenerateContentConfig(**config_kwargs)
-
         return self.client.models.generate_content(
             model=self.model_name, contents=history, config=config
         )

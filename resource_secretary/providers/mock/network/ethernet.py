@@ -11,6 +11,16 @@ class MockEthernetProvider(MockBaseProvider):
     Density: Number of virtual/physical interfaces.
     """
 
+    def __init__(self, config):
+        super().__init__(config)
+        self._devices = []
+        self.available = False
+        self.capability_tools = {"network": ["get_interface_stats"]}
+
+    @property
+    def name(self) -> str:
+        return "ethernet"
+
     def probe(self) -> bool:
         # Determine how many interfaces exist (density)
         # High density might include bridge/docker interfaces

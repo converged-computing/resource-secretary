@@ -105,13 +105,13 @@ class SecretaryAgent:
         """
         Deliberate can be a negotiation or a selection (prompt is an argument)
         """
-        self.history = [
+        history = [
             {"role": "system", "content": instructions},
             {"role": "user", "content": f"Request: {request}"},
         ]
         self.calls = []
 
-        # Require the agent to make observations?
+        # Require the agent to make observations (calls)
         obs_count = 0
         print(f"Observations required: {required_obs}")
 
@@ -119,27 +119,26 @@ class SecretaryAgent:
             console.print(f"\n[bold magenta]Iteration {i}:[/bold magenta] Asking LLM...")
 
             # Since "tool calls" are local functions, they are in the text response
-            raw_response = self.backend.generate_response(self.history)
+            raw_response = self.backend.generate_response(history)
             content, _ = self.backend.extract_content_and_calls(raw_response)
 
             console.print(Panel(content, title="🧠 LLM Thought/Action", border_style="green"))
-            self.history.append(self.backend.format_assistant_message(raw_response))
+            history.append(self.backend.format_assistant_message(raw_response))
 
             # Look for CALL: provider.function(args)
             calls = re.findall(r"CALL:\s*([\w\-]+)\.([\w\-]+)\((.*)\)", content)
-            if calls:
-                print(f"  Requested calls: {calls}")
-
             if not calls:
                 if "FINAL PROPOSAL:" in content or "FINAL RESULT:" in content:
 
                     # In practice, zero calls often doesn't make sense, but depends on function.
                     if obs_count < required_obs:
-                        print("NOT REQUIRED CALLS")
-                        self.history.append(
+                        print(
+                            f"Calls done {obs_count} but {required_obs} required, requesting more."
+                        )
+                        history.append(
                             {
                                 "role": "user",
-                                "content": "You are required to make at least one CALL",
+                                "content": f"You are required to make at least {required_obs} calls to explore the environment and validate your claims.",
                             }
                         )
                         continue
@@ -150,12 +149,13 @@ class SecretaryAgent:
                     print(content)
                     return content
 
-                self.history.append(
+                history.append(
                     {"role": "user", "content": "Please provide a FINAL PROPOSAL or a CALL:."}
                 )
                 continue
 
             # These are function calls on the classes
+            print(f"  Requested calls: {calls}")
             obs = "OBSERVATIONS:\n"
             for p_name, f_name, args_str in calls:
                 args = {}
@@ -164,14 +164,15 @@ class SecretaryAgent:
                     args[k] = v
 
                 result = self.execute_call(p_name, f_name, args)
-                self.calls.append({"provider": p_name, "function": f_name, "args": args})
-                obs += f"- {p_name}.{f_name}: {result}\n"
-                console.print(Panel(result, title=f"☎️ Call {f_name}: {args}", border_style="blue"))
                 obs_count += 1
 
-            self.history.append({"role": "user", "content": obs})
+                # Results are usually json, but not always
+                self.calls.append({"provider": p_name, "function": f_name, "args": args})
+                obs += f"- {p_name}.{f_name}: {result}\n"
 
-        return "Deliberation timed out."
+            history.append({"role": "user", "content": obs})
+
+        return "TIMEOUT"
 
     async def submit(self, request: str) -> str:
         """
@@ -282,10 +283,11 @@ class SecretaryAgent:
             "6. FINAL PROPOSAL: Start your final response with 'FINAL PROPOSAL:'. Provide your technical reasoning.\n"
             "7. STRUCTURED DATA: At the very end of your response, you MUST include a JSON code block "
             "containing the following keys:\n"
-            "   - 'verdict': (READY, BUSY, RESTRICTED, or INCOMPATIBLE)\n"
+            "   - 'verdict': (READY, BUSY, or INCOMPATIBLE)\n"
             "   - 'reasoning': A brief summary of why this verdict was chosen.\n"
             "   - 'metrics': { 'queue_depth': int, 'ets_seconds': int } (Use 0 for READY, -1 if unknown)\n"
-            "   - 'constraints': [list of strings] (Specific policy/resource limits for RESTRICTED)\n"
+            "   - 'calls': A list of tool calls you made to validate your result\n"
+            "   - 'constraints': [list of strings] (Specific policy/resource limits)\n"
             "\n"
             "Example format:\n"
             "FINAL PROPOSAL: Technical explanation here...\n"
@@ -294,9 +296,16 @@ class SecretaryAgent:
             '  "verdict": "BUSY",\n'
             '  "reasoning": "Cluster has the requested A100 GPUs, but 4 jobs are ahead in the queue.",\n'
             '  "metrics": { "queue_depth": 4, "ets_seconds": 1200 },\n'
+            '  "calls": ["provider.function(arg=val)"]'
             '  "constraints": []\n'
             "}\n"
             "```"
         )
-        # Require at least 3 calls, and max 15 loops of thinking
-        return await self.deliberate(request, instructions, 3, 15)
+        # Require at least 1 call, and max 10 loops of thinking
+        result = await self.deliberate(request, instructions, 1, 10)
+
+        # Max attempts reached
+        if "TIMEOUT" in result:
+            timeout = json.dumps({"verdict": "UNKNOWN", "reason": "Deliberation timed out."})
+            return f"FINAL PROPOSAL: Deliberation timed out.\n```json\n{json.dumps(timeout)}\n```"
+        return result

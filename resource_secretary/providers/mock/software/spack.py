@@ -161,16 +161,28 @@ class MockSpackProvider(MockBaseProvider):
         return (
             f"Package: {name}\n"
             f"Description: Procedural mock for {name}.\n"
-            f"Versions: Latest {CURRENT_YEAR}.1.0\n"
+            f"Versions: Latest {year}.1.0\n"
             f"Variants: [mpi, cuda, debug, shared]"
         )
 
     def export_truth(self) -> Dict[str, Any]:
         """
         The gold standard for accuracy calculation.
+
+        Spack is different than others because we tell agent if there is support for MPI and cuda.
+        Shared install largely doesn't matter, but could for some use cases.
         """
+        manifest = {}
+        for p in self.packages:
+            pkg = f"{p['name']}@{p['version']}"
+            manifest[pkg] = {
+                "variants": {"mpi": p["variants"]["mpi"], "cuda": p["variants"]["cuda"]}
+            }
+
         return {
             "version": self.version,
             "total_packages": len(self.packages),
-            "manifest": [f"{p['name']}@{p['version']}" for p in self.packages],
+            # Let's expose a subset of metadata for the experiment.
+            # In practice the agent will look at cuda/mpi for support
+            "manifest": manifest,
         }

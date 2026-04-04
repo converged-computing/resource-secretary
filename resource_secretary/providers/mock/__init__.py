@@ -72,6 +72,9 @@ def discover_mock_providers(
             instance = cls(config)
             instance.category = category
 
+            # Save the archetype with the instance
+            instance.archetype = archetype
+
             # The provider uses its expertise to interpret the config and generate its internal state.
             # E.g, spack knows to generate itself with packages, etc.
             if instance.probe():
