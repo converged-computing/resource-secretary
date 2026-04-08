@@ -34,7 +34,7 @@ class MockHardwareProvider(MockBaseProvider):
 
     def probe(self) -> bool:
         """
-        The Hardware Expert realizes the physical specs of the local node.
+        Find the physical specs of the local node.
         """
         rng = self.config.get_rng("hardware")
 

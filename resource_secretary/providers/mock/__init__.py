@@ -6,7 +6,7 @@ import pkgutil
 import random
 from typing import Dict, List, Union
 
-from .archetype import CloudArchetype, HPCArchetype, StandaloneArchetype
+from .archetype import BaseArchetype, CloudArchetype, HPCArchetype, StandaloneArchetype
 from .base import MockBaseProvider
 from .config import MockConfig
 
@@ -82,6 +82,28 @@ def discover_mock_providers(
                     worker_providers[category] = []
                 worker_providers[category].append(instance)
 
+    return worker_providers
+
+
+def get_all_mock_providers():
+    """
+    Get all mock providers, regardless of archetype, etc.
+    """
+    class_catalog = find_provider_classes()
+    worker_providers = {}
+    archetype = archetypes.get("hpc", HPCArchetype)()
+    config = MockConfig(0, archetype)
+    print(class_catalog)
+
+    # Each archetype knows its own slots (min/max/choices)
+    for category, classes in class_catalog.items():
+        for cls in classes:
+            if hasattr(cls, "abstract") and cls.abstract:
+                continue
+            instance = cls(config)
+            if category not in worker_providers:
+                worker_providers[category] = []
+            worker_providers[category].append(instance)
     return worker_providers
 
 

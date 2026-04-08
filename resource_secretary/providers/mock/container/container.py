@@ -5,6 +5,8 @@ from ..base import MockBaseProvider
 
 
 class MockContainerProvider(MockBaseProvider):
+    abstract = True
+
     def __init__(self, config, runtime, rootless=False):
         super().__init__(config)
         self.runtime = runtime
@@ -27,16 +29,21 @@ class MockContainerProvider(MockBaseProvider):
 
 
 class MockDockerProvider(MockContainerProvider):
+    abstract = False
+
     def __init__(self, config):
         super().__init__(config, "docker", rootless=False)
 
 
 class MockPodmanProvider(MockContainerProvider):
+    abstract = False
+
     def __init__(self, config):
         super().__init__(config, "podman", rootless=True)
 
 
 class MockSingularityProvider(MockBaseProvider):
+
     def __init__(self, config):
         super().__init__(config)
 

@@ -6,7 +6,7 @@ from ..base import MockBaseProvider
 
 class MockKubernetesProvider(MockBaseProvider):
     """
-    Expert Mock: Kubernetes Orchestrator.
+    Kubernetes Orchestrator.
     """
 
     def __init__(self, config):

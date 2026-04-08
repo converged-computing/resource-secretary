@@ -37,6 +37,10 @@ class GlobalCatalog:
         """
         # _ is the worker id
         for _, providers in self.fleet_truth.items():
+            # This is a 404 provider, or some other issue.
+            # We eventually want a more robust way to de-register these, potentially
+            if "message" in providers and "failed to connect" in providers["message"]:
+                continue
             for category, metadata in providers["truth"].items():
                 # This has truth, and the tool registry
                 for name, truth in metadata.items():
@@ -49,8 +53,8 @@ class GlobalCatalog:
                                 app, ver = pkg.split("@")
                                 self.software[app].add(ver)
 
-                        elif name == "conda":
-                            for _, pkgs in truth.get("environments", {}).items():
+                        elif name in ["conda", "pip"]:
+                            for _, pkgs in truth.get("installs", {}).items():
                                 for pkg in pkgs:
                                     app, ver = pkg.split("@")
                                     self.software[app].add(ver)
@@ -69,9 +73,7 @@ class GlobalCatalog:
                             self.gpu_models.add(truth.get("gpu_model"))
 
                     elif category == "workload":
-                        # Same for flux or slurm
-                        self.max_nodes = max(self.max_nodes, truth.get("node_count", 0))
-                        # TODO kubeneretes
+                        self.max_nodes = max(self.max_nodes, truth.get("total_nodes", 1))
 
                     elif category == "network":
                         self.fabrics.add(name)
@@ -95,19 +97,19 @@ class PromptGenerator:
 
     TEMPLATES = {
         1: [  # Just App. I am adding this because I expect it is too little information
-            "I need a system with {app} installed.",
-            "Does this system have {app}?",
-            "I need to run a job with {app}.",
+            "I need a system with {app} installed",
+            "I want a system to run {app}",
+            "I need to run a job with {app}",
         ],
         2: [  # App + Version OR App + Scale
             "I need to run {app} version {v_range}.",
             "I want a system to run {app} with {count} {unit}",
-            "Is {app} available for a {count} {unit} job?",
+            "I need {app} available for a {count} {unit} job",
         ],
         3: [  # App + Version + Scale
-            "I need to run {app} {v_range} for a {count} {unit} workload.",
-            "I want a system to run {app} ({v_range}) with {count} {unit}.",
-            "I need to request {count} {unit} to run {app} {v_range}.",
+            "I need to run {app} {v_range} for a {count} {unit} workload",
+            "I want a system to run {app} ({v_range}) with {count} {unit}",
+            "I need to request {count} {unit} to run {app} {v_range}",
         ],
         4: [  # App + Version + Scale + [Fabric OR Storage]
             "I need to run {app} {v_range} on {count} {unit} with {fabric} connectivity",
@@ -122,12 +124,12 @@ class PromptGenerator:
         6: [  # Add urgency
             "I need to run {app} {v_range}, {count} {unit}, {fabric}, and {storage} {urgency}.",
             "I want a system to run {app} {v_range} on {count} {unit} ({fabric}/{storage}) {urgency}",
-            "I want to immediately run {app} {v_range} with {count} {unit} on {fabric} and {storage}",
+            "I want to {urgency} run {app} {v_range} with {count} {unit} on {fabric} and {storage}",
         ],
         7: [  # Container technology. Agent needs to decide if app is required LOCALLY (should arguably not be, should be irrelevant)
-            "I need to use {app} {v_range} and {runtime}, {count} {unit}, {fabric}, and {storage} {urgency}",
-            "I want a system to run {app} {v_range} with {runtime} on {count} {unit} ({fabric}/{storage}) {urgency}",
-            "I want to immediately run {app} {v_range} with {runtime} and {count} {unit} on {fabric} and {storage}",
+            "I need to run {app} {v_range} via {runtime}, {count} {unit}, {fabric}, and {storage} {urgency}.",
+            "I want a system to run {app} {v_range} via {runtime} on {count} {unit} ({fabric}/{storage}) {urgency}",
+            "I want to {urgency} run {app} {v_range} via {runtime} with {count} {unit} on {fabric} and {storage}",
         ],
     }
 
@@ -156,21 +158,27 @@ class PromptGenerator:
         version = random.choice(list(self.catalog.software[app]))
         op = random.choice([">=", "==", "<="])
         unit = random.choice(["cores", "nodes"])
-        count = random.randint(
+
+        # Define your limit (70% of the cluster)
+        limit = max(
             1,
-            max(
-                1,
-                int(
-                    self.catalog.max_cores * 0.7
-                    if unit == "cores"
-                    else self.catalog.max_nodes * 0.7
-                ),
-            ),
+            int(self.catalog.max_cores * 0.7 if unit == "cores" else self.catalog.max_nodes * 0.7),
         )
+
+        # skew factor will make very large jobs more rare.
+        skew_factor = 10
+
+        # Generate a float between 0 and 1, then skew it
+        # This pushes most results toward 0.0
+        sampled_ratio = random.random() ** skew_factor
+
+        # Scale to range [1, limit]
+        count = 1 + int(sampled_ratio * (limit - 1))
+
         fabric = random.choice(list(self.catalog.fabrics))
         storage = random.choice(list(self.catalog.storage_types))
         urgency_type = random.choice(["immediate", "relaxed"])
-        urgency_text = "right now" if urgency_type == "immediate" else "later"
+        urgency_text = "right now" if urgency_type == "immediate" else ""
 
         # Assume if we have mpi and low latency network... not specific about mpi variant for now
         has_mpi = random.choice([True, False])

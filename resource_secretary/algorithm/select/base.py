@@ -15,6 +15,7 @@ class WorkerVerdict(str, Enum):
 class SelectionStatus(str, Enum):
     SELECTED = "SELECTED"
     REJECTED = "REJECTED"
+    UNKNOWN = "UNKNOWN"
 
 
 class WorkerProposal(BaseModel):

@@ -5,6 +5,7 @@ from resource_secretary.cli.ask.export import handle_export
 from resource_secretary.cli.ask.list import handle_list
 from resource_secretary.cli.ask.negotiate import handle_negotiate
 from resource_secretary.cli.ask.satisfy import handle_satisfy
+from resource_secretary.cli.ask.select import handle_select
 
 
 def main():
@@ -20,23 +21,30 @@ def main():
 
     # Satisfy
     satisfy_p = subparsers.add_parser("satisfy", help="Dry run: query cluster compatibility")
-    satisfy_p.add_argument("prompt", help="Job description")
 
     # Export (e.g., simulation metadata)
     export_p = subparsers.add_parser("export", help="Export ground truth metadata from the fleet")
     export_p.add_argument("--output", help="Path to save the raw JSON output")
 
+    select_p = subparsers.add_parser("select", help="Select for a prompt from proposals (in json)")
+    select_p.add_argument(
+        "--proposals", help="Path to json with proposals. Each should have data.proposal"
+    )
+
     # Negotiate
     negotiate_p = subparsers.add_parser(
         "negotiate", help="Full lifecycle: negotiate, select, dispatch"
     )
-    negotiate_p.add_argument("prompt", help="Job description")
+
+    # Selection strategy
     negotiate_p.add_argument(
         "--select",
         action="append",
         dest="select_strategies",
         help="Append selection strategies. Default: ['random', 'soonest']",
     )
+    for command in satisfy_p, negotiate_p, select_p:
+        command.add_argument("prompt", help="Job description")
     for command in negotiate_p, export_p, satisfy_p:
         command.add_argument("--url", default="http://localhost:8000/mcp")
 
@@ -44,6 +52,8 @@ def main():
 
     if args.command == "list":
         handle_list(args)
+    elif args.command == "select":
+        handle_select(args)
     elif args.command == "satisfy":
         asyncio.run(handle_satisfy(args))
     elif args.command == "export":

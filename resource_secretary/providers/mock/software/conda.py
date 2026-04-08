@@ -163,7 +163,7 @@ class MockCondaProvider(MockBaseProvider):
         """
         return {
             "total_envs": len(self._envs),
-            "environments": {
+            "installs": {
                 name: [f'{p["name"]}@{p["version"]}' for p in d["packages"]]
                 for name, d in self._envs.items()
             },

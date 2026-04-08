@@ -26,7 +26,6 @@ class SecretaryAgent:
     def __init__(self, providers: List[Any] = None, verbose=False):
         self.providers = providers or []
         self.backend = get_backend()
-        self.history = []
         self.calls = []
         self.provider_map = {p.name: p for p in self.providers}
         self.verbose = verbose
@@ -78,10 +77,12 @@ class SecretaryAgent:
         """
         provider = self.provider_map.get(provider_name)
         if not provider:
+            print(f"Provider {provider_name} was not found")
             return f"Error: Provider '{provider_name}' not found."
 
         handler = provider.tools.get(func_name)
         if not handler:
+            print(f"Provider {provider_name} is missing function {func_name}")
             return f"Error: Function '{func_name}' not found."
 
         console.print(
@@ -111,8 +112,10 @@ class SecretaryAgent:
         ]
         self.calls = []
 
+        # Return if agent attempted to return without observing the system
+        no_observation = False
+
         # Require the agent to make observations (calls)
-        obs_count = 0
         print(f"Observations required: {required_obs}")
 
         for i in range(max_attempts):
@@ -128,43 +131,48 @@ class SecretaryAgent:
             # Look for CALL: provider.function(args)
             calls = re.findall(r"CALL:\s*([\w\-]+)\.([\w\-]+)\((.*)\)", content)
             if not calls:
-                if "FINAL PROPOSAL:" in content or "FINAL RESULT:" in content:
+                if "FINAL PROPOSAL" in content or "FINAL RESULT" in content:
 
                     # In practice, zero calls often doesn't make sense, but depends on function.
-                    if obs_count < required_obs:
+                    if len(self.calls) < required_obs:
+                        no_observation = True
                         print(
-                            f"Calls done {obs_count} but {required_obs} required, requesting more."
+                            f"Calls done {len(self.calls)} but {required_obs} required, requesting more."
                         )
                         history.append(
                             {
                                 "role": "user",
-                                "content": f"You are required to make at least {required_obs} calls to explore the environment and validate your claims.",
+                                "content": f"You are required to make at least {required_obs} calls in the format CALL: provider.function(arg=val).",
                             }
                         )
                         continue
 
                     console.print("[bold green]✅ Proposal Received.[/bold green]")
+                    content = f"EARLY RETURN: {no_observation}\n{content}"
                     if self.verbose:
                         content += f"\nCALLS\n```json\n{json.dumps(self.calls)}\n```"
                     print(content)
                     return content
 
                 history.append(
-                    {"role": "user", "content": "Please provide a FINAL PROPOSAL or a CALL:."}
+                    {
+                        "role": "user",
+                        "content": "Please provide a FINAL PROPOSAL or a Format: CALL: provider.function(arg=val).",
+                    }
                 )
                 continue
 
             # These are function calls on the classes
             print(f"  Requested calls: {calls}")
             obs = "OBSERVATIONS:\n"
-            for p_name, f_name, args_str in calls:
+            for call in calls:
+                p_name, f_name, args_str = call
                 args = {}
                 arg_pairs = re.findall(r'(\w+)\s*=\s*["\']?([^"\',]+)["\']?', args_str)
                 for k, v in arg_pairs:
                     args[k] = v
 
                 result = self.execute_call(p_name, f_name, args)
-                obs_count += 1
 
                 # Results are usually json, but not always
                 self.calls.append({"provider": p_name, "function": f_name, "args": args})
@@ -216,7 +224,7 @@ class SecretaryAgent:
         # Require at least 2 calls - submit and info
         return await self.deliberate(f"EXECUTE REQUEST: {request}", instructions, 2)
 
-    async def select(self, request: str, proposals: Dict[str, Any]) -> str:
+    async def select(self, request: str, proposals: Dict[str, Any], metadata: str = None) -> str:
         """
         Select a job given a set of contender clusters. This is typically run after negotiate,
         and not on a single node, but by the calling client that received proposals back from the hub.
@@ -229,10 +237,11 @@ class SecretaryAgent:
             "1. COMPARE: Evaluate which cluster best matches the hardware, software, and timing requirements.\n"
             "2. PRIORITIZE: READY clusters always beat BUSY clusters unless a BUSY cluster has a significantly "
             "better hardware match (e.g., exact software version vs. a compatible one).\n"
-            "3. RANK: If multiple clusters are BUSY, choose the one with the lowest 'ets_seconds'.\n"
-            # These aren't implemented yet, need to think about
-            "4. INVESTIGATE: If you have Hub-level tools (provided in metadata), use them to verify "
-            "external constraints like cost or site-wide priority.\n"
+            "3. RANK: If multiple clusters are BUSY, choose the best one, and tell why.\n"
+            # TODO: need to think about how selection tools would work. These would likely be models/algorithms
+            # for selection, not anything that provides access to cluster metadata (we are not running there)
+            "4. INVESTIGATE: If you have Hub-level tools you MUST use them to verify assumptions\n"
+            "   If you do not have tools, use any metadata or context provided to make a best assessment.\n"
             "5. FINAL PROPOSAL: Start your final response with 'FINAL PROPOSAL:'.\n"
             "6. STRUCTURED DATA: At the very end of your response, you MUST include a JSON code block:\n"
             "   - 'worker_id': The ID of the chosen cluster.\n"
@@ -249,6 +258,9 @@ class SecretaryAgent:
             "}\n"
             "```"
         )
+        if metadata:
+            instruction += "\n" + metadata
+
         request = (
             f"ORIGINAL USER REQUEST: '{request}'\n\n"
             f"CLUSTER PROPOSALS TO EVALUATE:\n{json.dumps(proposals, indent=2)}"
@@ -272,8 +284,7 @@ class SecretaryAgent:
             f"{system_context}\n"
             "### MANDATORY PROTOCOL ###\n"
             "1. ANALYZE: Review the user request against the 'Current Manifest Metadata' provided above.\n"
-            "2. INVESTIGATE: If the metadata is insufficient to answer (e.g., check Spack builds, "
-            "Flux queue depth, or GPU memory), YOU MUST call one or more discovery functions.\n"
+            "2. INVESTIGATE: You MUST make provider tool calls to get evidence of the system envirionment. "
             "   Format: CALL: provider.function(arg=val)\n"
             "3. NO GENERIC CHAT: Do not explain HOW to use software. Only determine IF this cluster "
             "is compatible and available.\n"
@@ -286,7 +297,6 @@ class SecretaryAgent:
             "   - 'verdict': (READY, BUSY, or INCOMPATIBLE)\n"
             "   - 'reasoning': A brief summary of why this verdict was chosen.\n"
             "   - 'metrics': { 'queue_depth': int, 'ets_seconds': int } (Use 0 for READY, -1 if unknown)\n"
-            "   - 'calls': A list of tool calls you made to validate your result\n"
             "   - 'constraints': [list of strings] (Specific policy/resource limits)\n"
             "\n"
             "Example format:\n"
@@ -296,7 +306,6 @@ class SecretaryAgent:
             '  "verdict": "BUSY",\n'
             '  "reasoning": "Cluster has the requested A100 GPUs, but 4 jobs are ahead in the queue.",\n'
             '  "metrics": { "queue_depth": 4, "ets_seconds": 1200 },\n'
-            '  "calls": ["provider.function(arg=val)"]'
             '  "constraints": []\n'
             "}\n"
             "```"

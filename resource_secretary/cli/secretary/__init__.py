@@ -17,13 +17,11 @@ def main():
 
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
 
-    # --- 'detect' Subcommand ---
+    # Detect, with option for subcommand and specific name
     detect_parser = subparsers.add_parser("detect", help="Audit local system capabilities")
-    # Optional category (e.g., 'software')
     detect_parser.add_argument(
         "category", nargs="?", help="Filter detection by category (e.g., 'software', 'workload')"
     )
-    # Optional specific provider (e.g., 'spack')
     detect_parser.add_argument(
         "name",
         nargs="?",
@@ -33,8 +31,13 @@ def main():
         "--json", action="store_true", help="Output raw discovered data as JSON"
     )
 
-    # providers Subcommand
-    subparsers.add_parser("providers", help="List all possible providers in the library")
+    # providers
+    providers = subparsers.add_parser(
+        "providers", help="List all possible providers in the library"
+    )
+    providers.add_argument(
+        "--simulated", action="store_true", help="Show simulated providers and descriptions"
+    )
 
     args = parser.parse_args()
 
