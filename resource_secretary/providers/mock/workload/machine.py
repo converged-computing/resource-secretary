@@ -7,7 +7,7 @@ from ..base import MockBaseProvider
 
 class MockMachineProvider(MockBaseProvider):
     """
-    Expert Mock: Local Machine (Direct Execution).
+    Local Machine (Direct Execution).
     Acts as a Workload Manager for standalone systems.
     """
 
@@ -47,7 +47,7 @@ class MockMachineProvider(MockBaseProvider):
         uptime and nproc summary.
         Returns current load and core availability.
         """
-        load = round(self.config.density_target * 4, 2)
+        load = round(self.config.targets["density"] * 4, 2)
         return (
             f"System: {self.config.system_name}\n"
             f"Cores: {self.total_cores} total, {self.idle_cores} currently idle\n"

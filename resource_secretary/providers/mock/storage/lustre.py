@@ -6,9 +6,9 @@ from ..base import MockBaseProvider
 
 class MockLustreProvider(MockBaseProvider):
     """
-    Expert Mock: Lustre Parallel Filesystem.
-    Scale Anchor: Total Capacity (TB/PB).
-    Density Anchor: Utilization Percentage.
+    Lustre Parallel Filesystem.
+    Scale: total Capacity (TB/PB).
+    Density: utilization Percentage.
     """
 
     def __init__(self, config):

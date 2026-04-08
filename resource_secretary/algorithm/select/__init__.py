@@ -1,8 +1,15 @@
 from typing import List, Union
 
 from .agentic import AgenticSelector
-from .base import BaseSelector, SelectionResult, SelectionStatus, WorkerVerdict
-from .heuristic import FirstReadySelector, RandomSelector, RunAnytimeSelector, SoonestSelector
+from .base import BaseSelector, SelectionResult, SelectionStatus, WorkerVerdict  # noqa
+from .heuristic import (
+    DynamicQueueSelector,
+    FirstReadySelector,
+    MinCostSelector,
+    RandomSelector,
+    RunAnytimeSelector,
+    SoonestSelector,
+)
 from .pipeline import SelectorPipeline
 
 STRATEGIES = {
@@ -11,6 +18,8 @@ STRATEGIES = {
     "soonest": SoonestSelector,
     "run-anytime": RunAnytimeSelector,
     "agentic": AgenticSelector,
+    "min-cost": MinCostSelector,
+    "queue-depth": DynamicQueueSelector,
     # TODO add cost related
 }
 

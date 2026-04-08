@@ -12,6 +12,16 @@ class BaseArchetype:
     mu_density = 0.5
     sigma_density = 0.2
 
+    ranges = {
+        "nodes": (0, 10000),
+        "cpus_per_node": (2, 128),
+        "mem_per_node_gb": (2, 1024),
+        "gpus_per_node": (0, 8),
+        "software_packages": (0, 500),
+        "partitions": (0, 100),
+        "storage_gb": (10, 10000000),
+    }
+
     def generate_physical_value(self, key: str, target: float, rng: random.Random) -> int:
         """
         Maps a normalized target (0.01-1.0) to a physical range
@@ -57,7 +67,12 @@ class HPCArchetype(BaseArchetype):
         "software": {
             "min": 1,
             "max": 3,
-            "choices": ["MockSpackProvider", "MockModuleProvider", "MockCondaProvider"],
+            "choices": [
+                "MockSpackProvider",
+                "MockModuleProvider",
+                "MockCondaProvider",
+                "MockCondaProvider",
+            ],
         },
         "storage": {
             "min": 1,
@@ -96,7 +111,7 @@ class CloudArchetype(BaseArchetype):
 
     slots = {
         "workload": {"min": 1, "max": 1, "choices": ["MockKubernetesProvider"]},
-        "software": {"min": 1, "max": 2, "choices": ["MockCondaProvider"]},
+        "software": {"min": 1, "max": 1, "choices": ["MockCondaProvider", "MockPipProvider"]},
         "storage": {"min": 1, "max": 2, "choices": ["MockS3Provider", "MockNFSProvider"]},
         "network": {"min": 1, "max": 1, "choices": ["MockEthernetProvider"]},
         "hardware": {"min": 1, "max": 1, "choices": ["MockHardwareProvider"]},
@@ -120,7 +135,7 @@ class StandaloneArchetype(BaseArchetype):
     # Cardinality for each type.
     slots = {
         "workload": {"min": 1, "max": 1, "choices": ["MockMachineProvider"]},
-        "software": {"min": 1, "max": 2, "choices": ["MockCondaProvider", "MockSpackProvider"]},
+        "software": {"min": 1, "max": 2, "choices": ["MockCondaProvider", "MockPipProvider"]},
         "storage": {"min": 1, "max": 1, "choices": ["MockLocalScratchProvider"]},
         "hardware": {"min": 1, "max": 1, "choices": ["MockHardwareProvider"]},
         "network": {"min": 1, "max": 1, "choices": ["MockEthernetProvider"]},

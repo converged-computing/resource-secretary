@@ -35,14 +35,34 @@ class SimulationAuditor:
 
         # Compare with agent's reported Verdict
         agent_data = agent_resp.get("data", {}).get("proposal")
+        if not agent_data:
+            print(f"Missing agent data response: {agent_resp}")
+            return {}
+
+        # Store initial (full response) to keep/
+        # The agent makes a lot of deliberation, but this is what matters.
+        agent_response = agent_data
 
         # Audit the tool calls (Did the agent just get lucky?)
         calls = []
         if "CALLS" in agent_data:
-            agent_data, calls_block = agent_data.split("CALLS")
-            calls = format_calls(calls_block)
+            try:
+                agent_data, calls_block = agent_data.split("CALLS")
+                calls = format_calls(calls_block)
+            except:
+                print(f"Issue parsing calls, agent had malformed response: {agent_data}")
+                pass
 
-        agent_data = json.loads(utils.extract_code_block(agent_data))
+        # Unknown (timeout) vs. Malformed response (very rare, but in a few hundred I saw one)
+        try:
+            if "UNKNOWN" in agent_data:
+                agent_data = {"verdict": "UNKNOWN", "reason": "Deliberation timed out."}
+            else:
+                agent_data = json.loads(utils.extract_code_block(agent_data))
+        except:
+            agent_data = {"verdict": "UNKNOWN", "reason": "Malformed response"}
+
+        # Always get the verdict from the data.
         agent_verdict = agent_data.get("verdict", "UNKNOWN").upper()
 
         # if actually INCOMPATIBLE need to parse just MISSING and only
@@ -103,6 +123,7 @@ class SimulationAuditor:
                 "reasoning": agent_data,
                 "calls": calls,
                 "missing_requirements": missing_requirements,
+                "response": agent_response,
             },
         }
 
@@ -175,7 +196,14 @@ class SimulationAuditor:
             if busy == "yes":
                 compatible_status = "BUSY"
 
-        if agent_verdict == "INCOMPATIBLE":
+        if agent_verdict == "UNKNOWN":
+            justification = {
+                "is_valid": False,
+                "reason": "The agent was unable to complete the task, likely max attempts.",
+                "actual_state": compatible_status if is_compatible else "INCOMPATIBLE",
+            }
+
+        elif agent_verdict == "INCOMPATIBLE":
             # Agent said not compatible, and it isn't.
             if not is_compatible:
                 justification = {
@@ -353,6 +381,8 @@ class SimulationAuditor:
         Verify a container runtime
         """
         requested_runtime = req["runtime"]
+        if "container" not in requested_runtime:
+            return []
         if requested_runtime not in truth["container"]:
             # Allow sub for docker/podman - they are "same"
             if requested_runtime == "docker" and "podman" in truth["container"]:
@@ -436,22 +466,25 @@ class SimulationAuditor:
             # Note that compute won't be present for very simple requests
             if spack_installs and "compute" in requirement:
 
-                # Important - if we require gpus, we need spack variant with cuda
-                gpus = requirement["compute"]["gpus"]
-                if (
-                    gpus > 0
-                    and not truth["software"]["spack"]["manifest"][package_name]["variants"]["cuda"]
-                ):
-                    missing.append(
-                        f"software: {package_name} is not configured for required CUDA support."
-                    )
-
-                # If we need MPI, we also need mpi support
-                if "parallel" in requirement and "mpi" in requirement["parallel"]:
-                    if not truth["software"]["spack"]["manifest"][package_name]["variants"]["mpi"]:
+                # Mostly debugging
+                spack_manifest = truth["software"]["spack"]["manifest"]
+                if package_name not in spack_manifest:
+                    print(f"Missing {package_name} in spack manifest.")
+                    print(truth["software"]["spack"]["manifest"])
+                else:
+                    # Important - if we require gpus, we need spack variant with cuda
+                    gpus = requirement["compute"]["gpus"]
+                    if gpus > 0 and not spack_manifest[package_name]["variants"]["cuda"]:
                         missing.append(
-                            f"software: {package_name} is not configured for required MPI support."
+                            f"software: {package_name} is not configured for required CUDA support."
                         )
+
+                    # If we need MPI, we also need mpi support
+                    if "parallel" in requirement and "mpi" in requirement["parallel"]:
+                        if not spack_manifest[package_name]["variants"]["mpi"]:
+                            missing.append(
+                                f"software: {package_name} is not configured for required MPI support."
+                            )
 
         # Check Modules
         if "modules" in truth["software"]:
@@ -459,9 +492,14 @@ class SimulationAuditor:
             for mods in truth["software"]["modules"]["modules"].values():
                 found_instances += parse_version(mods, app_name)
 
-        # Check Conda
+        # Check Conda (currently squash across envs)
         if "conda" in truth["software"]:
-            for pkgs in truth["software"]["conda"]["environments"].values():
+            for pkgs in truth["software"]["conda"]["installs"].values():
+                found_instances += parse_version(pkgs, app_name)
+
+        # and pip
+        if "pip" in truth["software"]:
+            for pkgs in truth["software"]["pip"]["installs"].values():
                 found_instances += parse_version(pkgs, app_name)
 
         # Did not find anything, and we needed a version
@@ -595,7 +633,7 @@ def parse_version(packages, app_name):
     """
     found_instances = []
 
-    # modules vs conda/spack
+    # modules vs conda/spack/pip
     for pkg in packages:
         sep = "@" if "@" in pkg else "/"
         version = None

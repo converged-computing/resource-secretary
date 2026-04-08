@@ -18,6 +18,27 @@ class DispatchArgs:
     url: str
 
 
+async def negotiate_job(hub, prompt):
+    """
+    Shared negotiate for select and negotiate
+    """
+    with console.status("[bold green]Broadcasting request to fleet..."):
+        try:
+            result = await hub.call_tool("negotiate_job", {"prompt": prompt})
+
+            # Extract data (FastMCP structured content vs standard MCP text)
+            data = getattr(result, "structured_content", None)
+            if not data:
+                data = json.loads(result.content[0].text)
+
+            proposals = data.get("proposals", {})
+        except Exception as e:
+            console.print(f"[bold red]Negotiation Error:[/bold red] Failed to contact Hub: {e}")
+            return {}
+
+    return proposals
+
+
 async def handle_negotiate(args):
     """
     The full automated pipeline:
@@ -38,22 +59,7 @@ async def handle_negotiate(args):
     )
 
     async with Client(url) as hub:
-
-        # 1. Negotiation
-        with console.status("[bold green]Broadcasting request to fleet..."):
-            try:
-                result = await hub.call_tool("negotiate_job", {"prompt": prompt})
-
-                # Extract data (FastMCP structured content vs standard MCP text)
-                data = getattr(result, "structured_content", None)
-                if not data:
-                    data = json.loads(result.content[0].text)
-
-                proposals = data.get("proposals", {})
-            except Exception as e:
-                console.print(f"[bold red]Negotiation Error:[/bold red] Failed to contact Hub: {e}")
-                return
-
+        proposals = await negotiate_job(hub, prompt)
         if not proposals:
             console.print("[bold red]Rejection:[/bold red] No workers are registered in the fleet.")
             return

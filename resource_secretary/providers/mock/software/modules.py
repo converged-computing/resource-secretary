@@ -67,7 +67,7 @@ MODULE_CATALOG = {
 
 class MockModuleProvider(MockBaseProvider):
     """
-    Expert Mock: Environment Modules (Lmod/TCL).
+    Environment Modules (Lmod/TCL).
     Anchor: Density (Number of available modules).
     Volatility: Medium (0.3).
     """
@@ -84,7 +84,7 @@ class MockModuleProvider(MockBaseProvider):
 
     def probe(self) -> bool:
         """
-        The Modules Expert generates its available list based on Density.
+        Generate available list based on density
         """
         rng = self.config.get_rng("modules")
 

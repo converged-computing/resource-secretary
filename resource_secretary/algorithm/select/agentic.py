@@ -37,11 +37,18 @@ class AgenticSelector(BaseSelector):
         raw_response = await agent.select(prompt, compatibles)
 
         # Parse result using existing utils...
-        decision_json = utils.extract_code_block(raw_response)
-        data = json.loads(decision_json)
+        try:
+            decision_json = utils.extract_code_block(raw_response)
+            data = json.loads(decision_json)
+        except:
+            data = {"status": "UNKNOWN", "reasoning": "Issue loading agent response."}
 
-        return SelectionResult(
-            worker_id=data.get("worker_id"),
-            status=SelectionStatus(data.get("status", "REJECTED")),
-            reasoning=data.get("reasoning", "No reasoning provided."),
-        )
+        try:
+            return SelectionResult(
+                worker_id=data.get("worker_id"),
+                status=SelectionStatus(data.get("status", "REJECTED")),
+                reasoning=data.get("reasoning", "No reasoning provided."),
+            )
+        except Exception as e:
+            print(e)
+            print(data)

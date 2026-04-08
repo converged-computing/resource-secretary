@@ -3,6 +3,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from resource_secretary.providers import get_all_providers
+from resource_secretary.providers.mock import get_all_mock_providers
 
 console = Console()
 
@@ -19,7 +20,10 @@ def handle_list_providers(args):
         )
     )
 
-    catalog = get_all_providers()
+    if args.simulated:
+        catalog = get_all_mock_providers()
+    else:
+        catalog = get_all_providers()
 
     table = Table(
         title="Available Resource Providers", show_header=True, header_style="bold magenta"

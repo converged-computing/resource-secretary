@@ -7,7 +7,7 @@ from ..base import MockBaseProvider
 
 class MockFluxProvider(MockBaseProvider):
     """
-    Expert Mock: Flux Framework.
+    Flux Framework.
     Simulates high-fidelity Python binding responses with consistent capacity math.
     """
 

@@ -62,7 +62,7 @@ packages = {
 
 class MockSpackProvider(MockBaseProvider):
     """
-    Expert Mock: Generates a software environment.
+    Generate a software environment.
     Primary Anchor: Density (Variety/Complexity).
     Volatility: High (0.4) - Softare stacks vary wildly between systems.
     """
@@ -81,7 +81,7 @@ class MockSpackProvider(MockBaseProvider):
 
     def probe(self) -> bool:
         """
-        The Spack Expert realizes its state by interpreting the worker's density.
+        Realize state by interpreting the worker's density.
         I am choosing density for most of these because a package install is informationally
         rich. It's not just a number of packages - there are variants, metadata, etc.
         """
