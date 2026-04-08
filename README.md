@@ -5,6 +5,7 @@
 ![https://github.com/converged-computing/resource-secretary/blob/main/img/resource-secretary-small.png?raw=true](https://github.com/converged-computing/resource-secretary/blob/main/img/resource-secretary-small.png?raw=true)
 
 [![PyPI - Version](https://img.shields.io/pypi/v/resource-secretary)](https://badge.fury.io/py/resource-secretary)
+[![DOI](https://zenodo.org/badge/1188916606.svg)](https://doi.org/10.5281/zenodo.19476500)
 
 ## Design
 
