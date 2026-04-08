@@ -57,13 +57,15 @@ class RandomSelector(BaseSelector):
         for wid, resp in proposals.items():
             verdict = resp.get("actual_verdict")
             raw_text = resp.get("data", {}).get("proposal", "")
+            print(raw_text)
             try:
                 data = json.loads(utils.extract_code_block(raw_text))
                 # Preference to actual verdict
                 verdict = verdict or data.get("verdict")
                 if verdict == WorkerVerdict.READY:
                     ready_workers.append(wid)
-            except:
+            except Exception as e:
+                print(e)
                 continue
 
         if ready_workers:

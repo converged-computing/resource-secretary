@@ -43,12 +43,8 @@ class AgenticSelector(BaseSelector):
         except:
             data = {"status": "UNKNOWN", "reasoning": "Issue loading agent response."}
 
-        try:
-            return SelectionResult(
-                worker_id=data.get("worker_id"),
-                status=SelectionStatus(data.get("status", "REJECTED")),
-                reasoning=data.get("reasoning", "No reasoning provided."),
-            )
-        except Exception as e:
-            print(e)
-            print(data)
+        return SelectionResult(
+            worker_id=data.get("worker_id"),
+            status=SelectionStatus(data.get("status", "REJECTED")),
+            reasoning=data.get("reasoning", "No reasoning provided."),
+        )
