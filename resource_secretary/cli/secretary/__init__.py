@@ -1,6 +1,7 @@
 import argparse
 import sys
 
+from resource_secretary.cli.secretary.apps import handle_apps, handle_prompt
 from resource_secretary.cli.secretary.detect import handle_detect
 from resource_secretary.cli.secretary.providers import handle_list_providers
 
@@ -39,12 +40,37 @@ def main():
         "--simulated", action="store_true", help="Show simulated providers and descriptions"
     )
 
+    # apps
+    subparsers.add_parser("apps", help="List available applications")
+
+    # generate a matrix (one or more prompts) for an app
+    prompt_p = subparsers.add_parser("prompt", help="Generate test prompts")
+    prompt_p.add_argument("app", help="Name of the app (e.g., lammps)")
+    prompt_p.add_argument("--workload", default="reaxff", help="Workload key")
+    prompt_p.add_argument("--manager", default="flux", help="Manager key")
+    prompt_p.add_argument("--modifiers", nargs="*", help="Specific modifiers to include")
+
+    prompt_p.add_argument("-n", "--count", type=int, default=0, help="Number of prompts to select")
+    prompt_p.add_argument("-f", "--file", help="Path to params file (JSON/YAML)")
+    prompt_p.add_argument("-p", "--params", nargs="*", help="Override params (key=val)")
+    prompt_p.add_argument(
+        "-l", "--level", help="Filter by style key (e.g., 'Res:discovery')", default=None
+    )
+    prompt_p.add_argument("-o", "--output", help="Save results to JSON file")
+    prompt_p.add_argument(
+        "--show-count", action="store_true", help="Show count of possible prompts"
+    )
     args = parser.parse_args()
 
     if args.command == "detect":
         handle_detect(args)
     elif args.command == "providers":
         handle_list_providers(args)
+    elif args.command == "apps":
+        handle_apps(args)
+    elif args.command == "prompt":
+        handle_prompt(args)
+
     elif args.command is None:
         parser.print_help()
     else:

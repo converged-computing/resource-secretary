@@ -193,7 +193,7 @@ class SecretaryAgent:
             "### EXECUTION PROTOCOL ###\n"
             "1. TRANSLATE: Convert the user's natural language request into a concrete job specification.\n"
             "   (e.g., a Slurm sbatch script, a Flux job submit, or a Kubernetes manifest).\n"
-            "2. PREPARE: Check for requirements. You MUST use CALL for submit, info, cancel, etc..\n"
+            "2. PREPARE: Check for requirements. You MUST use tool calls for submit, info, cancel, etc..\n"
             "       Format: CALL: provider.function(arg=val)\n"
             "3. NO GENERIC/INTERACTIVE CHAT: Do not explain HOW to use software. You CANNOT ask questions.\n"
             "4. SUBMIT: You MUST use the appropriate CALL to submit the job.\n"

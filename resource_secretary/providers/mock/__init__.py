@@ -85,7 +85,7 @@ def discover_mock_providers(
     return worker_providers
 
 
-def get_all_mock_providers():
+def get_mock_providers(categories=None):
     """
     Get all mock providers, regardless of archetype, etc.
     """
@@ -97,6 +97,8 @@ def get_all_mock_providers():
 
     # Each archetype knows its own slots (min/max/choices)
     for category, classes in class_catalog.items():
+        if categories and category not in categories:
+            continue
         for cls in classes:
             if hasattr(cls, "abstract") and cls.abstract:
                 continue
