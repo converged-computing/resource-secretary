@@ -256,7 +256,7 @@ class FluxProvider(BaseProvider):
 
             # Map additional attributes to jobspec
             if environment is not None:
-                jobspec.environment = environment
+                jobspec.environment = utils.ensure_dict(environment)
             if duration is not None:
                 jobspec.duration = duration
             if cwd is not None:
@@ -377,7 +377,7 @@ class FluxProvider(BaseProvider):
                 if "data" in line.context:
                     lines.append(line.context["data"])
 
-                if delay is not None and (time.time() - start) > delay:
+                if delay is not None and (time.time() - start) > utils.ensure_int(delay):
                     complete = False
                     break
             return {"success": True, "error": None, "lines": lines, "complete": complete}

@@ -1,5 +1,6 @@
-import shlex
+import json
 import re
+import shlex
 
 
 def sanitize(name: str) -> str:
@@ -43,6 +44,16 @@ def ensure_int(number):
         return int(number)
     except:
         return number
+
+
+def ensure_dict(obj):
+    if obj is None:
+        return obj
+    try:
+        return json.loads(obj)
+    except:
+        pass
+    return extract_code_block(obj)
 
 
 def extract_code_block(text):
