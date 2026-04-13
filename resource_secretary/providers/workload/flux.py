@@ -204,6 +204,8 @@ class FluxProvider(BaseProvider):
         environment: Optional[Mapping[str, str]] = None,
         env_expand: Optional[Mapping[str, str]] = None,
         cwd: Optional[str] = None,
+        cpu_affinity: Optional[str] = None,
+        gpu_affinity: Optional[str] = None,
         rlimits: Optional[Mapping[str, int]] = None,
         name: Optional[str] = None,
         input: Optional[Union[str, os.PathLike]] = None,
@@ -229,6 +231,8 @@ class FluxProvider(BaseProvider):
             environment: Mapping of environment variables for the job.
             env_expand: Mapping of environment variables containing mustache templates.
             cwd: Set the current working directory for the job.
+            cpu_affinity: Set the cpu affinity (e.g., per-task)
+            gpu_affinity: Set the gpu affinity (e.g., per-task)
             rlimits: Mapping of process resource limits (e.g. {"nofile": 12000}).
             name: Set a custom job name.
             input: Path to a file for job input.
@@ -253,6 +257,19 @@ class FluxProvider(BaseProvider):
                 num_nodes=utils.ensure_int(num_nodes),
                 exclusive=utils.ensure_bool(exclusive),
             )
+
+            # https://github.com/flux-framework/flux-core/blob/master/doc/man1/common/job-shell-options.rst
+            # Flux Python SDK does not expose broker (shell) options
+            # but we can add them.
+            if cpu_affinity or gpu_affinity:
+                shell = jobspec.attributes["system"].get("shell", {})
+                if "options" not in shell:
+                    shell["options"] = {}
+                if cpu_affinity:
+                    shell["options"]["cpu-affinity"] = cpu_affinity
+                if gpu_affinity:
+                    shell["options"]["cpu-affinity"] = gpu_affinity
+                jobspec.attributes["system"]["shell"] = shell
 
             # Map additional attributes to jobspec
             if environment is not None:
