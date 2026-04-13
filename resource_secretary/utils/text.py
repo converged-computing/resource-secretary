@@ -3,23 +3,60 @@ import re
 import shlex
 
 
-def sanitize(name: str) -> str:
-    # Replace hyphens/dots with underscores
-    clean = name.replace("-", "_").replace(".", "_")
-    # Python identifiers cannot start with a digit
-    if clean[0].isdigit():
-        clean = f"n_{clean}"
-    return clean
-
-
-def format_rules(rules):
-    return "\n".join([f"- {r}" for r in rules])
+def format_calls(calls_block):
+    """
+    The secretary agent can return calls. We need to ensure we try
+    to get and parse them correctly.
+    """
+    calls = []
+    try:
+        return json.loads(extract_code_block(calls_block))
+    except:
+        return calls
 
 
 def ensure_command(command):
+    """
+    Ensure the command if provided as string is split into list.
+    """
     if isinstance(command, str):
         command = shlex.split(command)
     return command
+
+
+def from_string_arg(val):
+    """
+    When we parse a call (from string) we need to convert into Python types.
+    """
+    # None
+    if val is None or val.strip().lower() in ["none", "null"]:
+        return None
+
+    if val in [True, False]:
+        return val
+
+    # Dict
+    if val.startswith("{"):
+        try:
+            return json.loads(val)
+        except:
+            pass
+
+    # Booleans
+    lower_val = val.strip().lower()
+    if lower_val in ("true", "yes", "t", "on"):
+        return True
+    if lower_val in ("false", "no", "f", "off"):
+        return False
+
+    # numeric conversions (int, float, original)
+    try:
+        return int(val)
+    except ValueError:
+        try:
+            return float(val)
+        except ValueError:
+            return val
 
 
 def ensure_bool(value):
@@ -47,14 +84,15 @@ def ensure_int(number):
 
 
 def ensure_dict(obj):
-    if obj is None:
+    if obj is None or isinstance(obj, dict):
         return obj
     try:
         return json.loads(obj)
     except:
         pass
-    return extract_code_block(obj)
-
+    if isinstance(obj, str):
+        return extract_code_block(obj)
+    return obj
 
 def extract_code_block(text):
     """

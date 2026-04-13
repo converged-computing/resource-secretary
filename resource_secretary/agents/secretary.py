@@ -7,6 +7,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+import resource_secretary.utils as utils
 from resource_secretary.agents.backends import get_backend
 
 console = Console()
@@ -170,7 +171,7 @@ class SecretaryAgent:
                 args = {}
                 arg_pairs = re.findall(r'(\w+)\s*=\s*["\']?([^"\',]+)["\']?', args_str)
                 for k, v in arg_pairs:
-                    args[k] = v
+                    args[k] = utils.from_string_arg(v)
 
                 result = self.execute_call(p_name, f_name, args)
 
@@ -193,19 +194,17 @@ class SecretaryAgent:
             "### EXECUTION PROTOCOL ###\n"
             "1. TRANSLATE: Convert the user's natural language request into a concrete job specification.\n"
             "   (e.g., a Slurm sbatch script, a Flux job submit, or a Kubernetes manifest).\n"
-            "2. PREPARE: Check for requirements. You MUST use tool calls for submit, info, cancel, etc..\n"
+            "2. You MUST use tool callsto submit, get info, etc..\n"
             "       Format: CALL: provider.function(arg=val)\n"
             "3. NO GENERIC/INTERACTIVE CHAT: Do not explain HOW to use software. You CANNOT ask questions.\n"
-            "4. SUBMIT: You MUST use the appropriate CALL to submit the job.\n"
-            "5. BE HONEST: No faking submit or check. You MUST use CALL to submit, verify, and get info.\n"
-            "6. FORBIDDEN: Under no conditions should you touch jobs not related to this task.\n"
-            "7. VERIFY: After submission, YOU MUST verify the job is running at least 10 seconds AND has not errored.\n"
+            "4. BE HONEST: No faking submit or check. You MUST use CALL to submit, verify, and get info.\n"
+            "5. FORBIDDEN: Under no conditions should you touch jobs not related to this task.\n"
+            "6. VERIFY: After submission, YOU MUST verify the job is running at least 10 seconds AND has not errored.\n"
             "    You MUST look at the log and then status to verify no error has occurred."
-            "8. NO GHOST JOBS: You MUST retrieve a real JobID.\n"
-            "    If you cannot verify a REAL job ID, you MUST report a failure.\n"
-            "9. FINAL RESULT: You MUST start with 'FINAL RESULT:'. Detail what was done.\n"
+            "7. You MUST verify a REAL job ID. You MUST retry if there is a command line issue you can fix.\n"
+            "8. FINAL RESULT: You MUST start with 'FINAL RESULT:'. Detail what was done.\n"
             "   You are allowed to return a FINAL RESULT with FAILED if you are missing information\n"
-            "10. RECEIPT: Include a JSON block at the end with:\n"
+            "9. RECEIPT: Include a JSON block at the end with:\n"
             "   - 'status': (SUCCESS or FAILED)\n"
             "   - 'job_id': The cluster-specific job identifier returned by a tool CALL.\n"
             "   - 'spec': The final command or script used for submission.\n"
