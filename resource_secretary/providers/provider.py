@@ -93,6 +93,12 @@ class BaseProvider:
     def metadata(self) -> Dict[str, Any]:
         return {}
 
+    def get_prompt_vocabulary(self):
+        """
+        Provider-specific flags that can be used in prompts.
+        """
+        return {}
+
     def discover_tools(
         self, tool_types: list = ["secretary", "dispatch"]
     ) -> Dict[str, Dict[str, Any]]:

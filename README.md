@@ -74,6 +74,7 @@ Each provider has a probe function that will return True/False if the provider e
 
 This library will be used by agents and secretaries. You can also run it locally to detect or list providers.
 
+
 ### Providers
 
 ```bash
@@ -147,6 +148,28 @@ $ resource-secretary detect container
 
 Tool Discovery (Agent Visibility)
  • singularity: list_cache
+```
+
+### Apps
+
+We have the start of an application library that can help to generate matrices of prompts.
+
+```bash
+# Show apps
+resource-secretary apps
+```
+
+And to generate a prompt
+
+```bash
+# Generate 5 prompts
+resource-secretary prompt lammps --count 5
+
+# Total count for flux
+resource-secretary prompt lammps --show-count --manager flux
+
+# Target flux, show count for exact
+resource-secretary prompt lammps --show-count --manager flux --level exact
 ```
 
 ## License

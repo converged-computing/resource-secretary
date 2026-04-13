@@ -60,6 +60,42 @@ class FluxProvider(BaseProvider):
             self.available = False
         return self.available
 
+    def get_modifier_templates(self):
+        """
+        Flux-specific flags that can be used in prompts.
+        """
+
+    def get_prompt_vocabulary(self):
+        """
+        Returns Flux-specific templates for the prompt generator.
+        """
+        return {
+            "manager": {
+                "exact": "flux run",
+                "verbatim": "using flux run",
+                "descriptive": "using the Flux workload manager",
+                "agnostic": "run {app}",
+            },
+            "resources": {
+                "exact": "-N{nodes} -n {tasks}",
+                "verbatim": "on {nodes} nodes and {tasks} tasks (-N{nodes} -n {tasks})",
+                "descriptive": "execute {app} across {nodes} nodes with {tasks} ranks",
+                "discovery": "using all available nodes and cores",
+            },
+            "modifiers": {
+                "affinity": {
+                    # Tell the generator this goes with 'flux run'
+                    "type": "manager",
+                    "variants": {
+                        "exact": "-o cpu-affinity=per-task",
+                        "verbatim": "setting the option -o cpu-affinity=per-task",
+                        "descriptive": "ensuring each task is pinned for performance",
+                    },
+                },
+            },
+            "syntax": {"run_cmd": "flux submit", "resource_flags": "-N{nodes} -n {tasks}"},
+        }
+
     @property
     def metadata(self) -> Dict[str, Any]:
         """
