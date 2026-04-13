@@ -173,6 +173,11 @@ resource-secretary prompt lammps --show-count --manager flux
 resource-secretary prompt lammps --show-count --manager flux --level exact
 ```
 
+## TODO
+
+- I'd like a unified prompt generator interface between negotiation/selection/dispatch.
+
+
 ## License
 
 HPCIC DevTools is distributed under the terms of the MIT license.

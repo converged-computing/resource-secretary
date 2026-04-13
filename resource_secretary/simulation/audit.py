@@ -48,7 +48,7 @@ class SimulationAuditor:
         if "CALLS" in agent_data:
             try:
                 agent_data, calls_block = agent_data.split("CALLS")
-                calls = format_calls(calls_block)
+                calls = utils.format_calls(calls_block)
             except:
                 print(f"Issue parsing calls, agent had malformed response: {agent_data}")
                 pass
@@ -644,14 +644,3 @@ def parse_version(packages, app_name):
         if name.lower() == app_name:
             found_instances.append((pkg, version))
     return found_instances
-
-
-def format_calls(calls_block):
-    """
-    Try to format calls.
-    """
-    calls = []
-    try:
-        return json.loads(utils.extract_code_block(calls_block))
-    except:
-        return calls
