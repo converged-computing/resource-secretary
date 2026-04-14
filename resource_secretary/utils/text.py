@@ -1,3 +1,4 @@
+import ast
 import json
 import re
 import shlex
@@ -28,6 +29,12 @@ def from_string_arg(val):
     """
     When we parse a call (from string) we need to convert into Python types.
     """
+    if isinstance(val, str):
+        try:
+            return ast.literal_eval(val)
+        except:
+            pass
+
     # None
     if val is None or val.strip().lower() in ["none", "null"]:
         return None
@@ -38,7 +45,7 @@ def from_string_arg(val):
     # Dict
     if val.startswith("{"):
         try:
-            return json.loads(val)
+            return extract_code_block(val)
         except:
             pass
 
@@ -84,15 +91,17 @@ def ensure_int(number):
 
 
 def ensure_dict(obj):
-    if obj is None or isinstance(obj, dict):
+    if obj is None or not obj:
         return obj
-    try:
-        return json.loads(obj)
-    except:
-        pass
+    if isinstance(obj, dict):
+        return obj
     if isinstance(obj, str):
-        return extract_code_block(obj)
+        try:
+            return extract_code_block(obj)
+        except:
+            pass
     return obj
+
 
 def extract_code_block(text):
     """

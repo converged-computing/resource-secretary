@@ -1,5 +1,4 @@
 import os
-import shlex
 import time
 from typing import Annotated, Any, Dict, List, Mapping, Optional, Union
 
@@ -9,7 +8,7 @@ from ..provider import BaseProvider, dispatch_tool, secretary_tool
 
 JobSubmissionResult = Annotated[
     Dict[str, Any],
-    "A dictionary containing 'success' (bool), 'error' (str or None), 'job_id' (int or None), and 'uri' (str).",
+    "A dictionary containing 'success' (bool), 'error' (str or None), and 'job_id' (int or None).",
 ]
 
 JobActionResponse = Annotated[
@@ -32,7 +31,9 @@ class FluxProvider(BaseProvider):
     """
     The Flux provider interacts with the Flux Framework using native Python bindings.
     It provides modular tools for deep investigation of scheduler state,
-    resource utilization, and queue parameters.
+    resource utilization, and queue parameters. Unlike flux-mcp, for now we
+    are explicitly setting the handle on probe and removing from dispatch
+    functions, assuming this will just serve a single probed handle. That can change.
     """
 
     def __init__(self):
@@ -194,7 +195,6 @@ class FluxProvider(BaseProvider):
     def submit_job(
         self,
         command: List[str],
-        uri: Optional[str] = None,
         num_tasks: int = 1,
         cores_per_task: int = 1,
         gpus_per_task: Optional[int] = None,
@@ -221,7 +221,6 @@ class FluxProvider(BaseProvider):
 
         Args:
             command: Command to execute (iterable of strings).
-            uri: Optional Flux URI. If not provided, uses local instance.
             num_tasks: Number of tasks to create.
             cores_per_task: Number of cores to allocate per task.
             gpus_per_task: Number of GPUs to allocate per task.
@@ -231,8 +230,8 @@ class FluxProvider(BaseProvider):
             environment: Mapping of environment variables for the job.
             env_expand: Mapping of environment variables containing mustache templates.
             cwd: Set the current working directory for the job.
-            cpu_affinity: Set the cpu affinity (e.g., per-task)
-            gpu_affinity: Set the gpu affinity (e.g., per-task)
+            cpu_affinity: Set the cpu affinity (support for per-task)
+            gpu_affinity: Set the gpu affinity (support for per-task)
             rlimits: Mapping of process resource limits (e.g. {"nofile": 12000}).
             name: Set a custom job name.
             input: Path to a file for job input.
@@ -247,6 +246,21 @@ class FluxProvider(BaseProvider):
             Dictionary containing the success status and Job ID or error message.
         """
         import flux.job
+
+        # Sets this wrong a lot
+        affinity_options = ["null", "None", "per-task"]
+        if gpu_affinity and isinstance(gpu_affinity, str) and gpu_affinity not in affinity_options:
+            return {
+                "success": False,
+                "error": "gpu_affinity must be unset or set to per-task",
+                "job_id": None,
+            }
+        if cpu_affinity and isinstance(cpu_affinity, str) and cpu_affinity not in affinity_options:
+            return {
+                "success": False,
+                "error": "cpu_affinity must be unset or set to per-task",
+                "job_id": None,
+            }
 
         try:
             jobspec = flux.job.JobspecV1.from_command(
@@ -300,18 +314,17 @@ class FluxProvider(BaseProvider):
                 jobspec.name = name
 
             jobid = flux.job.submit(self.handle, jobspec)
-            return {"success": True, "error": None, "job_id": int(jobid), "uri": uri or "local"}
+            return {"success": True, "error": None, "job_id": int(jobid)}
         except Exception as e:
-            return {"success": False, "error": str(e), "job_id": None, "uri": uri or "local"}
+            return {"success": False, "error": str(e), "job_id": None}
 
     @dispatch_tool
-    def cancel_job(self, job_id: Union[int, str], uri: Optional[str] = None) -> JobActionResponse:
+    def cancel_job(self, job_id: Union[int, str]) -> JobActionResponse:
         """
         Cancels a specific Flux job.
 
         Args:
             job_id: The ID of the job to cancel.
-            uri: Optional Flux URI.
         """
         import flux.job
 
@@ -327,13 +340,12 @@ class FluxProvider(BaseProvider):
             return {"success": False, "error": str(e), "message": "Cancellation had an error."}
 
     @dispatch_tool
-    def get_job_info(self, job_id: Union[int, str], uri: Optional[str] = None) -> JobInfoResult:
+    def get_job_info(self, job_id: Union[int, str]) -> JobInfoResult:
         """
         Retrieves status and metadata about a specific job.
 
         Args:
             job_id: The ID of the job.
-            uri: Optional Flux URI.
         """
         import flux.job
 
@@ -345,9 +357,7 @@ class FluxProvider(BaseProvider):
             return {"success": False, "error": str(e), "info": None}
 
     @dispatch_tool
-    def get_job_logs(
-        self, job_id: Union[int, str], uri: Optional[str] = None, delay: Optional[int] = None
-    ) -> LogLinesResult:
+    def get_job_logs(self, job_id: Union[int, str], delay: Optional[int] = None) -> LogLinesResult:
         """
         Retrieves the output logs (stdout/stderr) associated with a specific Flux job.
         If you set the delay, it will cut early and you may not get a complete log.
@@ -358,7 +368,6 @@ class FluxProvider(BaseProvider):
 
         Args:
             job_id: The unique identifier of the job (integer or f58 string).
-            uri: Optional Flux handle URI. If omitted, connects to the local instance.
             delay: The maximum time in seconds to spend collecting logs. If None,
                the function blocks until the job event stream is closed.
 
