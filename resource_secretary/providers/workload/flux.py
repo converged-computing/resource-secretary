@@ -337,6 +337,9 @@ class FluxProvider(BaseProvider):
                 "job_id": int(jid),
             }
         except Exception as e:
+            error = str(e)
+            if "job is inactive" in error:
+                return {"success": True, "message": "Job is inactive.", "job_id": int(jid)}
             return {"success": False, "error": str(e), "message": "Cancellation had an error."}
 
     @dispatch_tool
