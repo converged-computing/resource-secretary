@@ -25,6 +25,23 @@ def ensure_command(command):
     return command
 
 
+import ast
+import re
+
+
+def parse_args(args_str):
+    pattern = r"(\w+)\s*=\s*(\{.*?\}|'[^']*'|\"[^\"]*\"|[^,]+)"
+    matches = re.findall(pattern, args_str)
+    result = {}
+    for key, value in matches:
+        value = value.strip()
+        try:
+            result[key] = ast.literal_eval(value)
+        except:
+            result[key] = value.strip("'\"")
+    return result
+
+
 def from_string_arg(val):
     """
     When we parse a call (from string) we need to convert into Python types.
