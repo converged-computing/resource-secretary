@@ -168,11 +168,7 @@ class SecretaryAgent:
             obs = "OBSERVATIONS:\n"
             for call in calls:
                 p_name, f_name, args_str = call
-                args = {}
-                arg_pairs = re.findall(r'(\w+)\s*=\s*["\']?([^"\',]+)["\']?', args_str)
-                for k, v in arg_pairs:
-                    args[k] = utils.from_string_arg(v)
-
+                args = utils.parse_args(args_str)
                 result = self.execute_call(p_name, f_name, args)
 
                 # Results are usually json, but not always
@@ -192,19 +188,18 @@ class SecretaryAgent:
         instructions = (
             f"{system_context}\n"
             "### EXECUTION PROTOCOL ###\n"
-            "1. TRANSLATE: Convert the user's natural language request into a concrete job specification.\n"
-            "   (e.g., a Slurm sbatch script, a Flux job submit, or a Kubernetes manifest).\n"
+            "1. TRANSLATE: Convert the user's textual request into a submission call.\n"
             "2. You MUST use tool callsto submit, get info, etc..\n"
             "       Format: CALL: provider.function(arg=val)\n"
             "3. NO GENERIC/INTERACTIVE CHAT: Do not explain HOW to use software. You CANNOT ask questions.\n"
             "4. BE HONEST: No faking submit or check. You MUST use CALL to submit, verify, and get info.\n"
             "5. FORBIDDEN: Under no conditions should you touch jobs not related to this task.\n"
             "6. VERIFY: After submission, YOU MUST verify the job is running at least 10 seconds AND has not errored.\n"
-            "    You MUST look at the log and then status to verify no error has occurred."
-            "7. You MUST verify a REAL job ID. You MUST retry if there is a command line issue you can fix.\n"
-            "8. FINAL RESULT: You MUST start with 'FINAL RESULT:'. Detail what was done.\n"
-            "   You are allowed to return a FINAL RESULT with FAILED if you are missing information\n"
-            "9. RECEIPT: Include a JSON block at the end with:\n"
+            "    You MUST look at the log and then status to verify no error has occurred.\n"
+            "7. You MUST verify a REAL job ID.\n"
+            "8. You MUST make an effort to RETRY if there is error due to the submit command or flags.\n"
+            "9. FINAL RESULT: You MUST start with 'FINAL RESULT:'. Detail what was done.\n"
+            "10. RECEIPT: Include a JSON block at the end with:\n"
             "   - 'status': (SUCCESS or FAILED)\n"
             "   - 'job_id': The cluster-specific job identifier returned by a tool CALL.\n"
             "   - 'spec': The final command or script used for submission.\n"

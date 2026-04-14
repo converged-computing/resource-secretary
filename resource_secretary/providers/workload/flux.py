@@ -90,8 +90,8 @@ class FluxProvider(BaseProvider):
                     # Tell the generator this goes with 'flux run'
                     "type": "manager",
                     "variants": {
-                        "exact": "-o cpu-affinity=per-task",
-                        "verbatim": "setting the option -o cpu-affinity=per-task",
+                        "exact": "flux option -o cpu-affinity=per-task",
+                        "verbatim": "setting the flux option -o cpu-affinity=per-task",
                         "descriptive": "ensuring each task is pinned for performance",
                     },
                 },
