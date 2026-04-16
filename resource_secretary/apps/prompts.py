@@ -64,11 +64,11 @@ class AppPromptGenerator:
                 if component_name.startswith("modifier_"):
                     metadata = component_data.get("metadata", {})
                     flag = metadata.get("flag", "")
-
-                    if metadata.get("type") == "manager":
-                        manager_flags.append(flag)
-                    else:
-                        app_flags.append(flag)
+                    if flag:
+                        if metadata.get("type") == "manager":
+                            manager_flags.append(flag)
+                        else:
+                            app_flags.append(flag)
 
             # Assemble outputs
             full_prompt = " ".join([p for p in prompt_parts if p]).strip() + "."
