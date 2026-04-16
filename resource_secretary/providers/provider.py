@@ -78,7 +78,7 @@ class BaseProvider:
 
     is_provider = True
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         self.tools: Dict[str, Callable] = {}
         self.category: str = "unknown"
 
