@@ -321,7 +321,9 @@ class SecretaryAgent:
             "```"
         )
         # Require at least 1 call, and max 10 loops of thinking
-        result = await self.deliberate(request, instructions, 1, max_attempts=self.negotiate_max_attempts)
+        result = await self.deliberate(
+            request, instructions, 1, max_attempts=self.negotiate_max_attempts
+        )
 
         # Max attempts reached
         if "TIMEOUT" in result:
