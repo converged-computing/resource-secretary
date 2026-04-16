@@ -128,6 +128,8 @@ class SecretaryAgent:
 
         # Require the agent to make observations (calls)
         print(f"Observations required: {required_obs}")
+        print(f"          Max attempts: {max_attempts}")
+        print(type(max_attempts))
 
         for i in range(max_attempts):
             console.print(f"\n[bold magenta]Iteration {i}:[/bold magenta] Asking LLM...")
@@ -229,7 +231,7 @@ class SecretaryAgent:
         )
         # Require at least 2 calls - submit and info
         return await self.deliberate(
-            f"EXECUTE REQUEST: {request}", instructions, 2, self.submit_max_attempts
+            f"EXECUTE REQUEST: {request}", instructions, 2, max_attempts=self.submit_max_attempts
         )
 
     async def select(self, request: str, proposals: Dict[str, Any], metadata: str = None) -> str:
@@ -319,7 +321,7 @@ class SecretaryAgent:
             "```"
         )
         # Require at least 1 call, and max 10 loops of thinking
-        result = await self.deliberate(request, instructions, 1, self.negotiate_max_attempts)
+        result = await self.deliberate(request, instructions, 1, max_attempts=self.negotiate_max_attempts)
 
         # Max attempts reached
         if "TIMEOUT" in result:
