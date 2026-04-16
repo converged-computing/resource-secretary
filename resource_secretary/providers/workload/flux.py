@@ -399,16 +399,26 @@ class FluxProvider(BaseProvider):
                     "complete": False,
                 }
 
-            complete = True
             for line in event_watch:
+                if delay is not None and (time.time() - start) > utils.ensure_int(delay):
+                    # Add last data and return. We return here directly to avoid the continue
+                    # at the top and possibly allowing it to run forever.
+                    if "data" in line.context:
+                        lines.append(line.context["data"])
+                    return {
+                        "success": True,
+                        "status": "RUN",
+                        "error": None,
+                        "lines": lines,
+                        "complete": False,
+                    }
+
                 if not line:
                     continue
                 if "data" in line.context:
                     lines.append(line.context["data"])
 
-                if delay is not None and (time.time() - start) > utils.ensure_int(delay):
-                    complete = False
-                    break
-            return {"success": True, "error": None, "lines": lines, "complete": complete}
+            # If we get down here, complete
+            return {"success": True, "error": None, "lines": lines, "complete": True}
         except Exception as e:
             return {"success": False, "error": str(e), "lines": None, "complete": complete}
