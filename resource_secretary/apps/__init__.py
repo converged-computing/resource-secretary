@@ -11,6 +11,19 @@ def get_applications():
     return get_providers(root_path=path)
 
 
+def discover_applications():
+    """
+    Analogous to discover_providers, but add prefix. Leave out general.
+    """
+    apps = {}
+    for name, app in get_applications().items():
+        if name == "general":
+            continue
+        # This should prevent any potential namespace conflicts.
+        apps[f"app_{name}"] = app
+    return apps
+
+
 def get_application(name):
     """
     Finds an application by name and returns an instance.

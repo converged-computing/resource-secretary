@@ -1,5 +1,6 @@
 # Note that this base provides probe, etc.
 from dataclasses import dataclass
+from typing import Callable, Dict
 
 from resource_secretary.providers import get_providers
 from resource_secretary.providers.provider import BaseProvider
@@ -17,10 +18,10 @@ class PromptMatrix:
 class BaseApplication(BaseProvider):
     is_provider = True
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, *args, **kwargs):
         self.category = "application"
         self.default_workload = None
+        super().__init__(*args, **kwargs)
 
     def get_prompt_matrix(self, flatten=False, filters=None, **params) -> dict:
         """

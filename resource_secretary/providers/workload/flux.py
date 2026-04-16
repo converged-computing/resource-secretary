@@ -249,14 +249,14 @@ class FluxProvider(BaseProvider):
         import flux.job
 
         # Sets this wrong a lot
-        affinity_options = ["null", "None", "per-task"]
-        if gpu_affinity and isinstance(gpu_affinity, str) and gpu_affinity not in affinity_options:
+        affinity_options = ["per-task"]
+        if gpu_affinity is not None and gpu_affinity not in affinity_options:
             return {
                 "success": False,
                 "error": "gpu_affinity must be unset or set to per-task",
                 "job_id": None,
             }
-        if cpu_affinity and isinstance(cpu_affinity, str) and cpu_affinity not in affinity_options:
+        if cpu_affinity is not None and cpu_affinity not in affinity_options:
             return {
                 "success": False,
                 "error": "cpu_affinity must be unset or set to per-task",
