@@ -74,6 +74,13 @@ Each provider has a probe function that will return True/False if the provider e
 
 This library will be used by agents and secretaries. You can also run it locally to detect or list providers.
 
+### Settings
+
+We currently expose the maximum number of attempts that each provider is allowed to make.
+
+- `MCP_SERVER_SUBMIT_MAX_ATTEMPTS`: 10
+- `MCP_SERVER_NEGOTIATE_MAX_ATTEMPTS`: 10
+- `MCP_SERVER_SELECT_MAX_ATTEMPTS`: 10
 
 ### Providers
 

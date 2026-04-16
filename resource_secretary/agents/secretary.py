@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from typing import Any, Dict, List
 
@@ -30,6 +31,15 @@ class SecretaryAgent:
         self.calls = []
         self.provider_map = {p.name: p for p in self.providers}
         self.verbose = verbose
+        self.settings_from_environment()
+
+    def settings_from_environment(self):
+        """
+        Get max attempts from environment
+        """
+        self.select_max_attempts = int(os.environ.get("MCP_SERVER_SELECT_MAX_ATTEMPTS") or 10)
+        self.negotiate_max_attempts = int(os.environ.get("MCP_SERVER_NEGOTIATE_MAX_ATTEMPTS") or 10)
+        self.submit_max_attempts = int(os.environ.get("MCP_SERVER_SUBMIT_MAX_ATTEMPTS") or 10)
 
     def build_system_context(self, tool_types) -> str:
         """
@@ -218,7 +228,9 @@ class SecretaryAgent:
             "```"
         )
         # Require at least 2 calls - submit and info
-        return await self.deliberate(f"EXECUTE REQUEST: {request}", instructions, 2)
+        return await self.deliberate(
+            f"EXECUTE REQUEST: {request}", instructions, 2, self.submit_max_attempts
+        )
 
     async def select(self, request: str, proposals: Dict[str, Any], metadata: str = None) -> str:
         """
@@ -261,7 +273,7 @@ class SecretaryAgent:
             f"ORIGINAL USER REQUEST: '{request}'\n\n"
             f"CLUSTER PROPOSALS TO EVALUATE:\n{json.dumps(proposals, indent=2)}"
         )
-        return await self.deliberate(request, instructions)
+        return await self.deliberate(request, instructions, max_attempts=self.select_max_attempts)
 
     async def negotiate(self, request: str) -> str:
         """
@@ -307,7 +319,7 @@ class SecretaryAgent:
             "```"
         )
         # Require at least 1 call, and max 10 loops of thinking
-        result = await self.deliberate(request, instructions, 1, 10)
+        result = await self.deliberate(request, instructions, 1, self.negotiate_max_attempts)
 
         # Max attempts reached
         if "TIMEOUT" in result:
