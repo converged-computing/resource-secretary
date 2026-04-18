@@ -208,7 +208,7 @@ class FluxProvider(BaseProvider):
         cpu_affinity: Optional[str] = None,
         gpu_affinity: Optional[str] = None,
         rlimits: Optional[Mapping[str, int]] = None,
-        name: Optional[str] = None,
+        job_name: Optional[str] = None,
         input: Optional[Union[str, os.PathLike]] = None,
         output: Optional[Union[str, os.PathLike]] = None,
         error: Optional[Union[str, os.PathLike]] = None,
@@ -247,6 +247,16 @@ class FluxProvider(BaseProvider):
             Dictionary containing the success status and Job ID or error message.
         """
         import flux.job
+
+        # Try environment first. The agents get this wrong a lot
+        try:
+            environment = utils.from_string_arg(environment)
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Issue parsing 'environment' {str(e)}. Please try again.",
+                "job_id": None,
+            }
 
         # Sets this wrong a lot
         affinity_options = ["per-task"]
@@ -288,7 +298,7 @@ class FluxProvider(BaseProvider):
 
             # Map additional attributes to jobspec
             if environment is not None:
-                jobspec.environment = utils.ensure_dict(environment)
+                jobspec.environment = environment
             if duration is not None:
                 jobspec.duration = duration
             if cwd is not None:
@@ -311,13 +321,14 @@ class FluxProvider(BaseProvider):
                 jobspec.unbuffered = unbuffered
             if label_io is not None:
                 jobspec.label_io = label_io
-            if name is not None:
-                jobspec.name = name
+            if job_name is not None:
+                jobspec.name = job_name
 
             jobid = flux.job.submit(self.handle, jobspec)
             return {"success": True, "error": None, "job_id": int(jobid)}
         except Exception as e:
-            return {"success": False, "error": str(e), "job_id": None}
+            error = f"Issue parsing provided arguments: {e}"
+            return {"success": False, "error": error, "job_id": None}
 
     @dispatch_tool
     def cancel_job(self, job_id: Union[int, str]) -> JobActionResponse:
