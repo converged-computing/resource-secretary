@@ -64,7 +64,10 @@ def from_string_arg(val):
         try:
             return extract_code_block(val)
         except:
-            pass
+            try:
+                return ensure_dict(val)
+            except:
+                pass
 
     # Booleans
     lower_val = val.strip().lower()
