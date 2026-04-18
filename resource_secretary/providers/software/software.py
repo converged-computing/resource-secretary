@@ -31,6 +31,7 @@ class SoftwareProvider(BaseProvider):
     @secretary_tool
     @dispatch_tool
     def get_command_help(
+        self,
         binary_path: Annotated[
             str, "The absolute path to the application binary (e.g., '/usr/bin/lmp')."
         ],
@@ -91,13 +92,13 @@ class SoftwareProvider(BaseProvider):
         # CLI Flags (help is go style commands)
         variants: List[List[str]] = []
         if subcommand:
-            variants.append([binary_path, subcommand, "-h"])
             variants.append([binary_path, subcommand, "--help"])
             variants.append([binary_path, "help", subcommand])
+            variants.append([binary_path, subcommand, "-h"])
         else:
-            variants.append([binary_path, "-h"])
             variants.append([binary_path, "--help"])
             variants.append([binary_path, "help"])
+            variants.append([binary_path, "-h"])
 
         last_error = ""
         last_rc = 0
