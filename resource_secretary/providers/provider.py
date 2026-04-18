@@ -78,7 +78,7 @@ class BaseProvider:
 
     is_provider = True
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         self.tools: Dict[str, Callable] = {}
         self.category: str = "unknown"
 
@@ -91,6 +91,12 @@ class BaseProvider:
 
     @property
     def metadata(self) -> Dict[str, Any]:
+        return {}
+
+    def get_prompt_vocabulary(self):
+        """
+        Provider-specific flags that can be used in prompts.
+        """
         return {}
 
     def discover_tools(

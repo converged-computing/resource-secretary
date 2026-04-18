@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from typing import Any, Dict, List
 
@@ -7,6 +8,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+import resource_secretary.utils as utils
 from resource_secretary.agents.backends import get_backend
 
 console = Console()
@@ -29,6 +31,15 @@ class SecretaryAgent:
         self.calls = []
         self.provider_map = {p.name: p for p in self.providers}
         self.verbose = verbose
+        self.settings_from_environment()
+
+    def settings_from_environment(self):
+        """
+        Get max attempts from environment
+        """
+        self.select_max_attempts = int(os.environ.get("MCP_SERVER_SELECT_MAX_ATTEMPTS") or 10)
+        self.negotiate_max_attempts = int(os.environ.get("MCP_SERVER_NEGOTIATE_MAX_ATTEMPTS") or 10)
+        self.submit_max_attempts = int(os.environ.get("MCP_SERVER_SUBMIT_MAX_ATTEMPTS") or 10)
 
     def build_system_context(self, tool_types) -> str:
         """
@@ -117,6 +128,8 @@ class SecretaryAgent:
 
         # Require the agent to make observations (calls)
         print(f"Observations required: {required_obs}")
+        print(f"          Max attempts: {max_attempts}")
+        print(type(max_attempts))
 
         for i in range(max_attempts):
             console.print(f"\n[bold magenta]Iteration {i}:[/bold magenta] Asking LLM...")
@@ -167,11 +180,7 @@ class SecretaryAgent:
             obs = "OBSERVATIONS:\n"
             for call in calls:
                 p_name, f_name, args_str = call
-                args = {}
-                arg_pairs = re.findall(r'(\w+)\s*=\s*["\']?([^"\',]+)["\']?', args_str)
-                for k, v in arg_pairs:
-                    args[k] = v
-
+                args = utils.parse_args(args_str)
                 result = self.execute_call(p_name, f_name, args)
 
                 # Results are usually json, but not always
@@ -191,20 +200,20 @@ class SecretaryAgent:
         instructions = (
             f"{system_context}\n"
             "### EXECUTION PROTOCOL ###\n"
-            "1. TRANSLATE: Convert the user's natural language request into a concrete job specification.\n"
-            "   (e.g., a Slurm sbatch script, a Flux job submit, or a Kubernetes manifest).\n"
-            "2. PREPARE: Check for requirements. You MUST use CALL for submit, info, cancel, etc..\n"
+            "1. TRANSLATE: Convert the user's textual request into a submission call.\n"
+            "2. You MUST use tool calls to submit, get info, etc..\n"
             "       Format: CALL: provider.function(arg=val)\n"
             "3. NO GENERIC/INTERACTIVE CHAT: Do not explain HOW to use software. You CANNOT ask questions.\n"
-            "4. SUBMIT: You MUST use the appropriate CALL to submit the job.\n"
-            "5. BE HONEST: No faking submit or check. You MUST use CALL to submit, verify, and get info.\n"
-            "6. FORBIDDEN: Under no conditions should you touch jobs not related to this task.\n"
-            "7. VERIFY: After submission, YOU MUST call a status tool (e.g., squeue, flux jobs) "
-            "   to verify the job is actually in the system and get a Job ID. You MUST report this status.\n"
-            "8. NO GHOST JOBS: If you cannot verify a REAL job ID, you MUST report a failure.\n"
-            "9. FINAL RESULT: You MUST start with 'FINAL RESULT:'. Detail what was done.\n"
-            "   You are allowed to return a FINAL RESULT with FAILED if you are missing information\n"
-            "10. RECEIPT: Include a JSON block at the end with:\n"
+            "4. BE HONEST: No faking submit or check. You MUST use CALL to submit, verify, and get info.\n"
+            "5. FORBIDDEN: Under no conditions should you touch jobs not related to this task.\n"
+            "6. VERIFY: After submission, YOU MUST verify the job is running at least 10 seconds AND has not errored.\n"
+            "    You MUST look at the log and then status to verify no error has occurred.\n"
+            "    If the user provides an expectation, you MUST check for the condition and retry if it is not met.\n"
+            "7. You MUST verify a REAL job ID.\n"
+            "8. You MUST make an effort to RETRY if there is error due to the submit command or flags.\n"
+            "10. You MUST NOT remove user-specified application variables.\n"
+            "11. FINAL RESULT: You MUST start with 'FINAL RESULT:'. Detail what was done.\n"
+            "12. RECEIPT: Include a JSON block at the end with:\n"
             "   - 'status': (SUCCESS or FAILED)\n"
             "   - 'job_id': The cluster-specific job identifier returned by a tool CALL.\n"
             "   - 'spec': The final command or script used for submission.\n"
@@ -222,7 +231,9 @@ class SecretaryAgent:
             "```"
         )
         # Require at least 2 calls - submit and info
-        return await self.deliberate(f"EXECUTE REQUEST: {request}", instructions, 2)
+        return await self.deliberate(
+            f"EXECUTE REQUEST: {request}", instructions, 2, max_attempts=self.submit_max_attempts
+        )
 
     async def select(self, request: str, proposals: Dict[str, Any], metadata: str = None) -> str:
         """
@@ -265,7 +276,7 @@ class SecretaryAgent:
             f"ORIGINAL USER REQUEST: '{request}'\n\n"
             f"CLUSTER PROPOSALS TO EVALUATE:\n{json.dumps(proposals, indent=2)}"
         )
-        return await self.deliberate(request, instructions)
+        return await self.deliberate(request, instructions, max_attempts=self.select_max_attempts)
 
     async def negotiate(self, request: str) -> str:
         """
@@ -311,7 +322,9 @@ class SecretaryAgent:
             "```"
         )
         # Require at least 1 call, and max 10 loops of thinking
-        result = await self.deliberate(request, instructions, 1, 10)
+        result = await self.deliberate(
+            request, instructions, 1, max_attempts=self.negotiate_max_attempts
+        )
 
         # Max attempts reached
         if "TIMEOUT" in result:

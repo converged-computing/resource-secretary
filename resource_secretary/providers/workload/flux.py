@@ -1,13 +1,14 @@
 import os
-import shlex
 import time
 from typing import Annotated, Any, Dict, List, Mapping, Optional, Union
+
+import resource_secretary.utils as utils
 
 from ..provider import BaseProvider, dispatch_tool, secretary_tool
 
 JobSubmissionResult = Annotated[
     Dict[str, Any],
-    "A dictionary containing 'success' (bool), 'error' (str or None), 'job_id' (int or None), and 'uri' (str).",
+    "A dictionary containing 'success' (bool), 'error' (str or None), and 'job_id' (int or None).",
 ]
 
 JobActionResponse = Annotated[
@@ -30,7 +31,9 @@ class FluxProvider(BaseProvider):
     """
     The Flux provider interacts with the Flux Framework using native Python bindings.
     It provides modular tools for deep investigation of scheduler state,
-    resource utilization, and queue parameters.
+    resource utilization, and queue parameters. Unlike flux-mcp, for now we
+    are explicitly setting the handle on probe and removing from dispatch
+    functions, assuming this will just serve a single probed handle. That can change.
     """
 
     def __init__(self):
@@ -59,6 +62,43 @@ class FluxProvider(BaseProvider):
         except (ImportError, RuntimeError, Exception):
             self.available = False
         return self.available
+
+    def get_modifier_templates(self):
+        """
+        Flux-specific flags that can be used in prompts.
+        """
+
+    def get_prompt_vocabulary(self):
+        """
+        Returns Flux-specific templates for the prompt generator.
+        """
+        return {
+            "manager": {
+                "exact": "flux run",
+                "verbatim": "using flux run",
+                "descriptive": "using the Flux workload manager",
+                "agnostic": "run {app}",
+            },
+            "resources": {
+                "exact": "-N{nodes} -n {tasks}",
+                "verbatim": "on {nodes} nodes and {tasks} tasks (-N{nodes} -n {tasks})",
+                "descriptive": "execute {app} across {nodes} nodes with {tasks} ranks",
+                "discovery": "using all available nodes and cores",
+            },
+            "modifiers": {
+                "affinity": {
+                    # Tell the generator this goes with 'flux run'
+                    "type": "manager",
+                    "flag": "-o cpu-affinity=per-task",
+                    "variants": {
+                        "exact": "flux option -o cpu-affinity=per-task",
+                        "verbatim": "setting the flux option -o cpu-affinity=per-task",
+                        "descriptive": "ensuring each task is pinned for performance",
+                    },
+                },
+            },
+            "syntax": {"run_cmd": "flux submit", "resource_flags": "-N{nodes} -n {tasks}"},
+        }
 
     @property
     def metadata(self) -> Dict[str, Any]:
@@ -156,7 +196,6 @@ class FluxProvider(BaseProvider):
     def submit_job(
         self,
         command: List[str],
-        uri: Optional[str] = None,
         num_tasks: int = 1,
         cores_per_task: int = 1,
         gpus_per_task: Optional[int] = None,
@@ -166,8 +205,10 @@ class FluxProvider(BaseProvider):
         environment: Optional[Mapping[str, str]] = None,
         env_expand: Optional[Mapping[str, str]] = None,
         cwd: Optional[str] = None,
+        cpu_affinity: Optional[str] = None,
+        gpu_affinity: Optional[str] = None,
         rlimits: Optional[Mapping[str, int]] = None,
-        name: Optional[str] = None,
+        job_name: Optional[str] = None,
         input: Optional[Union[str, os.PathLike]] = None,
         output: Optional[Union[str, os.PathLike]] = None,
         error: Optional[Union[str, os.PathLike]] = None,
@@ -181,7 +222,6 @@ class FluxProvider(BaseProvider):
 
         Args:
             command: Command to execute (iterable of strings).
-            uri: Optional Flux URI. If not provided, uses local instance.
             num_tasks: Number of tasks to create.
             cores_per_task: Number of cores to allocate per task.
             gpus_per_task: Number of GPUs to allocate per task.
@@ -191,6 +231,8 @@ class FluxProvider(BaseProvider):
             environment: Mapping of environment variables for the job.
             env_expand: Mapping of environment variables containing mustache templates.
             cwd: Set the current working directory for the job.
+            cpu_affinity: Set the cpu affinity (support for per-task)
+            gpu_affinity: Set the gpu affinity (support for per-task)
             rlimits: Mapping of process resource limits (e.g. {"nofile": 12000}).
             name: Set a custom job name.
             input: Path to a file for job input.
@@ -206,17 +248,53 @@ class FluxProvider(BaseProvider):
         """
         import flux.job
 
-        if isinstance(command, str):
-            command = shlex.split(command)
+        # Try environment first. The agents get this wrong a lot
+        try:
+            environment = utils.from_string_arg(environment)
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Issue parsing 'environment' {str(e)}. Please try again.",
+                "job_id": None,
+            }
+
+        # Sets this wrong a lot
+        affinity_options = ["per-task"]
+        if gpu_affinity is not None and gpu_affinity not in affinity_options:
+            return {
+                "success": False,
+                "error": "gpu_affinity must be unset or set to per-task",
+                "job_id": None,
+            }
+        if cpu_affinity is not None and cpu_affinity not in affinity_options:
+            return {
+                "success": False,
+                "error": "cpu_affinity must be unset or set to per-task",
+                "job_id": None,
+            }
+
         try:
             jobspec = flux.job.JobspecV1.from_command(
-                command=command,
-                num_tasks=num_tasks,
-                cores_per_task=cores_per_task,
-                gpus_per_task=gpus_per_task,
-                num_nodes=int(num_nodes),
-                exclusive=exclusive,
+                command=utils.ensure_command(command),
+                num_tasks=utils.ensure_int(num_tasks),
+                cores_per_task=utils.ensure_int(cores_per_task),
+                gpus_per_task=utils.ensure_int(gpus_per_task),
+                num_nodes=utils.ensure_int(num_nodes),
+                exclusive=utils.ensure_bool(exclusive),
             )
+
+            # https://github.com/flux-framework/flux-core/blob/master/doc/man1/common/job-shell-options.rst
+            # Flux Python SDK does not expose broker (shell) options
+            # but we can add them.
+            if cpu_affinity or gpu_affinity:
+                shell = jobspec.attributes["system"].get("shell", {})
+                if "options" not in shell:
+                    shell["options"] = {}
+                if cpu_affinity:
+                    shell["options"]["cpu-affinity"] = cpu_affinity
+                if gpu_affinity:
+                    shell["options"]["cpu-affinity"] = gpu_affinity
+                jobspec.attributes["system"]["shell"] = shell
 
             # Map additional attributes to jobspec
             if environment is not None:
@@ -243,22 +321,22 @@ class FluxProvider(BaseProvider):
                 jobspec.unbuffered = unbuffered
             if label_io is not None:
                 jobspec.label_io = label_io
-            if name is not None:
-                jobspec.name = name
+            if job_name is not None:
+                jobspec.name = job_name
 
             jobid = flux.job.submit(self.handle, jobspec)
-            return {"success": True, "error": None, "job_id": int(jobid), "uri": uri or "local"}
+            return {"success": True, "error": None, "job_id": int(jobid)}
         except Exception as e:
-            return {"success": False, "error": str(e), "job_id": None, "uri": uri or "local"}
+            error = f"Issue parsing provided arguments: {e}"
+            return {"success": False, "error": error, "job_id": None}
 
     @dispatch_tool
-    def cancel_job(self, job_id: Union[int, str], uri: Optional[str] = None) -> JobActionResponse:
+    def cancel_job(self, job_id: Union[int, str]) -> JobActionResponse:
         """
         Cancels a specific Flux job.
 
         Args:
             job_id: The ID of the job to cancel.
-            uri: Optional Flux URI.
         """
         import flux.job
 
@@ -271,16 +349,18 @@ class FluxProvider(BaseProvider):
                 "job_id": int(jid),
             }
         except Exception as e:
+            error = str(e)
+            if "job is inactive" in error:
+                return {"success": True, "message": "Job is inactive.", "job_id": int(jid)}
             return {"success": False, "error": str(e), "message": "Cancellation had an error."}
 
     @dispatch_tool
-    def get_job_info(self, job_id: Union[int, str], uri: Optional[str] = None) -> JobInfoResult:
+    def get_job_info(self, job_id: Union[int, str]) -> JobInfoResult:
         """
         Retrieves status and metadata about a specific job.
 
         Args:
             job_id: The ID of the job.
-            uri: Optional Flux URI.
         """
         import flux.job
 
@@ -292,9 +372,7 @@ class FluxProvider(BaseProvider):
             return {"success": False, "error": str(e), "info": None}
 
     @dispatch_tool
-    def get_job_logs(
-        self, job_id: Union[int, str], uri: Optional[str] = None, delay: Optional[int] = None
-    ) -> LogLinesResult:
+    def get_job_logs(self, job_id: Union[int, str], delay: Optional[int] = None) -> LogLinesResult:
         """
         Retrieves the output logs (stdout/stderr) associated with a specific Flux job.
         If you set the delay, it will cut early and you may not get a complete log.
@@ -305,7 +383,6 @@ class FluxProvider(BaseProvider):
 
         Args:
             job_id: The unique identifier of the job (integer or f58 string).
-            uri: Optional Flux handle URI. If omitted, connects to the local instance.
             delay: The maximum time in seconds to spend collecting logs. If None,
                the function blocks until the job event stream is closed.
 
@@ -334,16 +411,26 @@ class FluxProvider(BaseProvider):
                     "complete": False,
                 }
 
-            complete = True
             for line in event_watch:
+                if delay is not None and (time.time() - start) > utils.ensure_int(delay):
+                    # Add last data and return. We return here directly to avoid the continue
+                    # at the top and possibly allowing it to run forever.
+                    if "data" in line.context:
+                        lines.append(line.context["data"])
+                    return {
+                        "success": True,
+                        "status": "RUN",
+                        "error": None,
+                        "lines": lines,
+                        "complete": False,
+                    }
+
                 if not line:
                     continue
                 if "data" in line.context:
                     lines.append(line.context["data"])
 
-                if delay is not None and (time.time() - start) > delay:
-                    complete = False
-                    break
-            return {"success": True, "error": None, "lines": lines, "complete": complete}
+            # If we get down here, complete
+            return {"success": True, "error": None, "lines": lines, "complete": True}
         except Exception as e:
             return {"success": False, "error": str(e), "lines": None, "complete": complete}
