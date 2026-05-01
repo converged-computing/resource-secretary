@@ -158,6 +158,10 @@ Tool Discovery (Agent Visibility)
  • singularity: list_cache
 ```
 
+### Workflows
+
+Designing and running a workflow toward a goal (for example a Snakemake workflow from the snakemake-wrappers catalog) is a separate agent, [workflow-secretary](https://github.com/converged-computing/workflow-secretary). The resource secretary only reports what a system provides.
+
 ### Apps
 
 We have the start of an application library that can help to generate matrices of prompts.
