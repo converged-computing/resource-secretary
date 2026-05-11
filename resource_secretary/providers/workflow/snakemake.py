@@ -273,18 +273,24 @@ class SnakemakeProvider(BaseProvider):
         return Path(SNAKEMAKE_WORK_DIR) / "steps"
 
     def _next_step_dir(self, rule_name: str) -> Path:
-        """Returns the next numbered step directory path (not yet created)."""
+        """
+        Returns the next numbered step directory path (not yet created).
+        """
         n = len(self._history) + 1
         return self._steps_dir / f"{n:02d}_{rule_name}"
 
     def _append_rule(self, rule_text: str):
-        """Appends a rule block to the accumulating Snakefile."""
+        """
+        Appends a rule block to the accumulating Snakefile.
+        """
         with open(self._snakefile_path, "a") as f:
             f.write("\n\n")
             f.write(rule_text)
 
     def _snakefile_size(self) -> int:
-        """Returns current Snakefile byte length, 0 if not yet created."""
+        """
+        Returns current Snakefile byte length, 0 if not yet created.
+        """
         if self._snakefile_path.exists():
             return self._snakefile_path.stat().st_size
         return 0
@@ -333,6 +339,132 @@ class SnakemakeProvider(BaseProvider):
                 else:
                     resolved[k] = str(work_p / "input" / v)
         return resolved
+
+    def _rebuild_from_content(self, rules_to_keep: List[tuple[str, str]]):
+        """
+        Helper to rewrite the Snakefile and update internal history based
+        on a list of (rule_name, rule_text) blocks.
+        """
+        # Clear existing file
+        self._snakefile_path.write_text("")
+
+        # We need to rebuild history.
+        # Note: This logic assumes the step directories already exist on disk.
+        new_history = []
+
+        for name, text in rules_to_keep:
+            pre_size = self._snakefile_size()
+
+            # Find the existing history entry to preserve the step_dir mapping
+            # if it exists, otherwise we'd lose the link to the folder.
+            old_entry = next((h for h in self._history if h["rule_name"] == name), None)
+
+            with open(self._snakefile_path, "a") as f:
+                f.write("\n\n" + text.strip())
+
+            if old_entry:
+                new_history.append(
+                    {
+                        "rule_name": name,
+                        "step_dir": old_entry["step_dir"],
+                        "snakefile_bytes": pre_size,
+                    }
+                )
+
+        self._history = new_history
+
+    @workflow_tool
+    def delete_rule(self, rule_name: str, delete_data: bool = False) -> Dict[str, Any]:
+        """
+        Removes a specific rule from the Snakefile by name.
+
+        Args:
+            rule_name (str): The name of the rule to delete.
+            delete_data (bool): If True, also deletes the associated
+                'steps/NN_rule_name' directory. Defaults to False.
+
+        Returns:
+            - success: True if the rule was found and removed.
+        """
+        if not self._snakefile_path.exists():
+            return {"success": False, "error": "Snakefile does not exist."}
+
+        content = self._snakefile_path.read_text()
+        # Split content into blocks starting with "rule "
+        # We use a simple split and filter to keep rule logic together
+        raw_blocks = content.split("\n\n")
+        new_blocks = []
+        found = False
+
+        for block in raw_blocks:
+            if block.strip().startswith(f"rule {rule_name}:"):
+                found = True
+                continue
+            if block.strip():
+                # Extract rule name for the rebuilder
+                name = block.strip().splitlines()[0].replace("rule ", "").replace(":", "").strip()
+                new_blocks.append((name, block))
+
+        if not found:
+            return {"success": False, "error": f"Rule '{rule_name}' not found."}
+
+        # Handle data deletion if requested
+        if delete_data:
+            entry = next((h for h in self._history if h["rule_name"] == rule_name), None)
+            if entry:
+                step_p = Path(SNAKEMAKE_WORK_DIR) / entry["step_dir"]
+                if step_p.exists():
+                    shutil.rmtree(step_p)
+
+        self._rebuild_from_content(new_blocks)
+        return {"success": True, "message": f"Rule '{rule_name}' removed."}
+
+    @workflow_tool
+    def deduplicate_rules(self) -> Dict[str, Any]:
+        """
+        Parses the Snakefile and finds rules with duplicate names.
+        It keeps only the LAST occurrence of any duplicate rule and
+        removes the others. This is useful for cleaning up failed retries.
+
+        Returns:
+            - success: True if deduplication completed.
+            - removed_count: Number of duplicate rules removed.
+        """
+        if not self._snakefile_path.exists():
+            return {"success": True, "removed_count": 0}
+
+        content = self._snakefile_path.read_text()
+        raw_blocks = content.split("\n\n")
+
+        # Map rule_name -> last_seen_content
+        unique_rules = {}
+        order = []  # To keep track of the first time we saw a rule to preserve order
+
+        count_before = 0
+        for block in raw_blocks:
+            clean = block.strip()
+            if not clean.startswith("rule "):
+                continue
+
+            count_before += 1
+            name = clean.splitlines()[0].replace("rule ", "").replace(":", "").strip()
+
+            if name not in unique_rules:
+                order.append(name)
+            unique_rules[name] = block
+
+        # Reconstruct blocks based on the order they first appeared,
+        # but using the content of the last appearance.
+        final_blocks = [(name, unique_rules[name]) for name in order]
+
+        removed_count = count_before - len(final_blocks)
+        self._rebuild_from_content(final_blocks)
+
+        return {
+            "success": True,
+            "removed_count": removed_count,
+            "current_rule_count": len(final_blocks),
+        }
 
     def _resolve_output_paths(self, output: Dict[str, Any], step_dir: Path) -> Dict[str, str]:
         """
@@ -843,6 +975,29 @@ class SnakemakeProvider(BaseProvider):
         return self._execute(rule_name, rule_text, resolved_output, step_dir)
 
     @workflow_tool
+    def view_snakefile(self) -> Dict[str, Any]:
+        """
+        Returns the full content of the current Snakefile.
+        Use this to inspect the sequence of rules and their parameters.
+
+        Returns a dictionary containing:
+          - success (bool): True if file was read
+          - content (str): The full text of the Snakefile
+          - rule_count (int): Number of rules currently defined
+        """
+        if not self._snakefile_path.exists():
+            return {"success": True, "content": "", "rule_count": 0}
+
+        try:
+            content = self._snakefile_path.read_text()
+            # Basic count by looking for the "rule " keyword at the start of lines
+            rule_count = len(
+                [line for line in content.splitlines() if line.strip().startswith("rule ")]
+            )
+            return {"success": True, "content": content, "rule_count": rule_count}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     def rollback_step(self) -> Dict[str, Any]:
         """
         Rolls back the most recently executed step. Removes the step's output
@@ -851,10 +1006,10 @@ class SnakemakeProvider(BaseProvider):
 
         Takes no arguments. Always rolls back exactly one step (the most recent).
 
-        Use this when a step has failed and you want to try a different wrapper,
-        different parameters, or a custom rule instead. After rolling back, the
-        next call to execute_wrapper or execute_rule will reuse the same step
-        number.
+        By default, when a step fails, we roll back for you. You must ONLY call
+        this tool when you want an additional rollback. Use this when you want to
+        redo a step that was not rolled back. You MUST inspect the Snakefile to
+        confirm first.
 
         Returns a dictionary containing:
           - success (bool): True if rollback completed successfully
