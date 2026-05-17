@@ -1,3 +1,4 @@
+import csv
 import os
 import shutil
 import subprocess
@@ -11,53 +12,23 @@ import resource_secretary.utils as utils
 
 from ..provider import BaseProvider, workflow_tool
 
-# Module-level environment configuration, read at import time
+# Module-level environment configuration
 SNAKEMAKE_WORK_DIR = os.environ.get("RESOURCE_SECRETARY_SNAKEMAKE_WORKDIR")
 SNAKEMAKE_INPUT_DIR = os.environ.get("RESOURCE_SECRETARY_SNAKEMAKE_INPUT")
 SNAKEMAKE_WRAPPER_VERSION = os.environ.get("RESOURCE_SECRETARY_SNAKEMAKE_WRAPPER_VERSION", "master")
 SNAKEMAKE_WRAPPER_CLONE = os.environ.get("RESOURCE_SECRETARY_SNAKEMAKE_WRAPPER_CLONE")
-
-print(f"  SNAKEMAKE_WORK_DIR:        {SNAKEMAKE_WORK_DIR}")
-print(f"  SNAKEMAKE_INPUT_DIR:       {SNAKEMAKE_INPUT_DIR}")
-print(f"  SNAKEMAKE_WRAPPER_VERSION: {SNAKEMAKE_WRAPPER_VERSION}")
-
 SHARED_EXECUTE_DOCSTRING = """
         Args:
             rule_name (str): A unique snake_case identifier for this rule.
-                Used to name the step directory (WORK_DIR/steps/NN_rulename/).
-                Examples: 'bwa_mem_A', 'samtools_sort_sample_B'.
-
             input (dict): Mapping of input argument names to file paths.
-                Path conventions:
-                  - Staged input files: relative to WORK_DIR/input/.
-                    Example: {"reads": ["samples/A_1.fastq", "samples/A_2.fastq"]}
-                  - Prior step outputs: prefix with 'steps/NN_rulename/'.
-                    Example: {"bam": "steps/01_bwa_mem_A/A.bam"}
-                Never use absolute paths or environment variable names.
-                *BIO TIP*: If a tool needs multiple index files, pass them as a list!
-                Example: {"idx": ["genome.fa.amb", "genome.fa.ann", "genome.fa.bwt"]}
-
+                - Staged files: relative to WORK_DIR/input/ (e.g. "samples/A_1.fastq")
+                - Prior step outputs: prefix with 'steps/NN_rulename/'
             output (dict): Mapping of output argument names to file paths.
-                Paths are relative to this step's directory (WORK_DIR/steps/NN_rulename/).
-                Example: {"bam": "A.bam"} writes to WORK_DIR/steps/NN_rulename/A.bam.
-
-            params (dict, optional): Mapping of parameter names to values.
-                *BIO TIP*: For parameters requiring tabs (like BWA Read Groups),
-                escape them carefully using double backslashes or spaces.
-                Example: {"extra": r"-R '@RG\\tID:A\\tSM:A'"}
-
-            threads (int, optional): Number of threads to allocate. Defaults to 1.
-            cores (int, optional): Number of cores to allocate. Defaults to 1.
-            log (str, optional): Pass any truthy value to enable automatic logging.
-
-        Returns a dictionary containing:
-          - success (bool): True if snakemake exited with returncode 0
-          - returncode (int): snakemake process return code
-          - stdout/stderr (str): Process output. Inspect carefully on failure.
-          - step_dir (str): path of this step's output directory.
-          - work_dir_listing: current recursive listing of WORK_DIR/steps/
-
-        Always check 'success' before proceeding to the next step.
+                - Relative to this step's directory.
+            params (dict, optional): Tool parameters.
+            threads (int, optional): Threads to allocate.
+            cores (int, optional): Cores to allocate.
+            log (str, optional): Pass truthy value to enable automatic logging.
 """
 
 
@@ -71,28 +42,22 @@ def _validate_path(path: str, mode: str = "read") -> tuple[Optional[Path], Optio
     if not SNAKEMAKE_WORK_DIR:
         return None, "RESOURCE_SECRETARY_SNAKEMAKE_WORKDIR is not set."
 
-    try:
-        p = Path(path).resolve()
-        work_p = Path(SNAKEMAKE_WORK_DIR).resolve()
+    p = Path(path).resolve()
+    work_p = Path(SNAKEMAKE_WORK_DIR).resolve()
 
-        if mode == "write":
-            steps_p = work_p / "steps"
-            if not p.is_relative_to(steps_p):
-                return None, (
-                    f"Security Error: Write access denied. "
-                    f"Path '{path}' is outside WORK_DIR/steps/."
-                )
-            return p, None
-
-        if mode == "read":
-            if p.is_relative_to(work_p):
-                return p, None
-            return None, (
-                f"Security Error: Read access denied. " f"Path '{path}' is outside WORK_DIR."
+    if mode == "write":
+        steps_p = work_p / "steps"
+        if not p.is_relative_to(steps_p):
+            return (
+                None,
+                f"Security Error: Write access denied. Path '{path}' is outside WORK_DIR/steps/.",
             )
+        return p, None
 
-    except Exception as e:
-        return None, f"Path resolution error: {e}"
+    if mode == "read":
+        if p.is_relative_to(work_p):
+            return p, None
+        return None, f"Security Error: Read access denied. " f"Path '{path}' is outside WORK_DIR."
 
     return None, "Unknown path error."
 
@@ -133,13 +98,38 @@ class SnakemakeProvider(BaseProvider):
         self._index: Dict[str, Dict[str, Any]] = {}
         self._conda_frontend: Optional[str] = None
 
-        # Execution state - AFTER a step is run.
-        self._history = []
         # Each entry: {rule_name, step_dir (relative to WORK_DIR), snakefile_bytes}
+        self._rules: List[Dict[str, str]] = []
+        self._header: str = ""
+        self._parallel_mode = False
 
     @property
     def name(self) -> str:
         return "snakemake"
+
+    @property
+    def history(self) -> List[Dict[str, Any]]:
+        """
+        Generates the history view dynamically from the rules list.
+        """
+        return [
+            {"step": i + 1, "rule_name": r["name"], "step_dir": r["step_dir"]}
+            for i, r in enumerate(self._rules)
+        ]
+
+    @property
+    def _steps_dir(self) -> Path:
+        """
+        The base directory for all step outputs.
+        """
+        return Path(SNAKEMAKE_WORK_DIR) / "steps"
+
+    @property
+    def snakefile_path(self) -> Path:
+        """
+        The filesystem location of the Snakefile.
+        """
+        return Path(SNAKEMAKE_WORK_DIR) / "Snakefile"
 
     @property
     def metadata(self) -> Dict[str, Any]:
@@ -151,17 +141,7 @@ class SnakemakeProvider(BaseProvider):
             "work_dir": SNAKEMAKE_WORK_DIR,
             "input_dir": SNAKEMAKE_INPUT_DIR,
             "available": self.available,
-            "steps_completed": len(self._history),
         }
-
-    def get_required_software(self, name, required=True):
-        """
-        Use shutil to find required (or fail)
-        """
-        path = shutil.which(name)
-        if not path and required:
-            raise ValueError(f"  SnakemakeProvider: {name} not found in PATH.")
-        return path
 
     def probe(self) -> bool:
         """
@@ -169,45 +149,39 @@ class SnakemakeProvider(BaseProvider):
         to a session-scoped temp directory, builds the wrapper index, and stages
         input data into WORK_DIR/input/ via symlinks.
         """
-        self._snakemake = self.get_required_software("snakemake")
-        self._git = self.get_required_software("git")
-        self._conda = self.get_required_software(
-            "mamba", required=False
-        ) or self.get_required_software("conda")
-        self._conda_frontend = "mamba" if "mamba" in self._conda else "conda"
-
-        if not SNAKEMAKE_WORK_DIR:
-            raise ValueError(
-                "  SnakemakeProvider: RESOURCE_SECRETARY_SNAKEMAKE_WORKDIR is not set."
-            )
+        self._snakemake = shutil.which("snakemake")
+        self._git = shutil.which("git")
+        conda_bin = shutil.which("mamba") or shutil.which("conda")
+        if not (self._snakemake and self._git and conda_bin):
+            raise ValueError("Required software (snakemake, git, conda/mamba) not found.")
 
         self._check_wrapper_utils()
+        self._conda_frontend = "mamba" if "mamba" in conda_bin else "conda"
+        if not SNAKEMAKE_WORK_DIR:
+            raise ValueError("RESOURCE_SECRETARY_SNAKEMAKE_WORKDIR is not set.")
 
-        # Ensure we have cloned wrappers
-        if SNAKEMAKE_WRAPPER_CLONE is not None and os.path.exists(SNAKEMAKE_WRAPPER_CLONE):
-            self.repo_url = SNAKEMAKE_WRAPPER_CLONE
-        else:
-            self.repo_path = self.clone_snakemake()
-
+        self.repo_path = self._setup_wrappers()
         self._build_index()
         self._setup_work_dir()
         self.available = True
-        return self.available
+        return True
 
-    def clone_snakemake(self):
+    def _setup_wrappers(self):
         """
-        Clone snakemake to a temporary directory or update already cloned
+        Clone the snakemake wrappers
         """
-        tmp_dir = Path(tempfile.gettempdir()) / "snakemake_wrappers_catalog"
-        if not tmp_dir.exists():
-            command = [self._git, "clone", "--depth", "1", self.repo_url, str(tmp_dir)]
+        dest = Path(tempfile.gettempdir()) / "snakemake_wrappers_catalog"
+        if SNAKEMAKE_WRAPPER_CLONE and os.path.exists(SNAKEMAKE_WRAPPER_CLONE):
+            return Path(SNAKEMAKE_WRAPPER_CLONE)
+
+        if not dest.exists():
+            cmd = [self._git, "clone", "--depth", "1", self.repo_url, str(dest)]
         else:
-            command = [self._git, "-C", str(tmp_dir), "pull"]
-        print(f"  SnakemakeProvider: cloning or updating wrappers at {tmp_dir} ...")
-        subprocess.run(command, check=True, capture_output=True)
-        return tmp_dir
+            cmd = [self._git, "-C", str(dest), "pull"]
+        subprocess.run(cmd, check=True, capture_output=True)
+        return dest
 
-    def _check_wrapper_utils(self) -> bool:
+    def _check_wrapper_utils(self):
         """
         Ensures snakemake-wrapper-utils is installed, installing it if not.
         Returns True if available after check, False if install failed.
@@ -225,26 +199,20 @@ class SnakemakeProvider(BaseProvider):
         contents into WORK_DIR/input/, preserving directory structure.
         """
         work_p = Path(SNAKEMAKE_WORK_DIR)
-        input_stage = work_p / "input"
-        steps_dir = work_p / "steps"
-        logs_dir = work_p / "logs"
+        for d in ["input", "steps", "logs"]:
+            (work_p / d).mkdir(parents=True, exist_ok=True)
 
-        for d in (work_p, input_stage, steps_dir, logs_dir):
-            d.mkdir(parents=True, exist_ok=True)
-
-        # Symlink INPUT_DIR contents into input/ preserving structure
+        # Create symlinks to actual data, allowing agent to muck with
         if SNAKEMAKE_INPUT_DIR:
-            input_src = Path(SNAKEMAKE_INPUT_DIR)
-            for src in sorted(input_src.rglob("*")):
-                rel = src.relative_to(input_src)
-                dest = input_stage / rel
+            src_root = Path(SNAKEMAKE_INPUT_DIR)
+            for src in src_root.rglob("*"):
+                rel = src.relative_to(src_root)
+                dest = work_p / "input" / rel
                 if src.is_dir():
                     dest.mkdir(parents=True, exist_ok=True)
                 elif src.is_file() and not dest.exists():
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     dest.symlink_to(src.resolve())
-
-        print(f"  SnakemakeProvider: work dir staged at {work_p}")
 
     def _build_index(self):
         """
@@ -257,41 +225,46 @@ class SnakemakeProvider(BaseProvider):
         for meta_path in self.repo_path.rglob("meta.yaml"):
             wrapper_dir = meta_path.parent
             wrapper_path = str(wrapper_dir.relative_to(self.repo_path))
+
+            # Metadata
             try:
                 meta = utils.read_yaml(meta_path) or {}
             except Exception:
                 meta = {}
-                print(f"Issue reading {meta_path}")
 
+            # Conda environments
+            conda_packages = []
             env_path = wrapper_dir / "environment.yaml"
-            try:
-                env = utils.read_yaml(str(env_path)) or {}
-                conda_packages = env.get("dependencies", [])
-            except Exception:
-                print(f"Issue reading {env_path}")
-                conda_packages = []
+            if env_path.exists():
+                try:
+                    env = utils.read_yaml(env_path) or {}
+                    conda_packages = env.get("dependencies", [])
+                except Exception:
+                    pass
 
-            # No print - unlikely to exist
+            # README and example
+            readme = ""
             for readme_name in ("README.md", "readme.md"):
                 readme_path = wrapper_dir / readme_name
-                try:
-                    readme = readme_path.read_text()
-                except Exception:
-                    readme = ""
+                if readme_path.exists():
+                    try:
+                        readme = readme_path.read_text()
+                        break
+                    except Exception:
+                        pass
 
+            example_rule = ""
             test_snakefile = wrapper_dir / "test" / "Snakefile"
-            try:
-                example_rule = test_snakefile.read_text()
-            except Exception:
-                print(f"Issue reading {test_snakefile}")
-                example_rule = ""
+            if test_snakefile.exists():
+                try:
+                    example_rule = test_snakefile.read_text()
+                except Exception:
+                    pass
 
-            category = wrapper_path.split("/")[0]
             wrapper_type = "meta_wrapper" if wrapper_path.startswith("meta/") else "wrapper"
-
             self._index[wrapper_path] = {
                 "path": wrapper_path,
-                "category": category,
+                "category": wrapper_path.split("/")[0],
                 "type": wrapper_type,
                 "name": meta.get("name", wrapper_path),
                 "description": meta.get("description", ""),
@@ -300,48 +273,32 @@ class SnakemakeProvider(BaseProvider):
                 "readme": readme,
                 "example_rule": example_rule,
             }
-
         print(f"  SnakemakeProvider: indexed {len(self._index)} wrappers.")
 
-    @property
-    def _snakefile_path(self) -> Path:
-        return Path(SNAKEMAKE_WORK_DIR) / "Snakefile"
+    def _rebuild_snakefile(self):
+        """
+        Assembles the Snakefile from its three components.
+        """
+        parts = []
+        if self._header:
+            parts.append(self._header.strip())
 
-    @property
-    def _steps_dir(self) -> Path:
-        return Path(SNAKEMAKE_WORK_DIR) / "steps"
+        # Target the last rule in the list
+        if self._rules:
+            last_rule = self._rules[-1]
+            target_lines = ["rule all:", "    input:"]
 
-    def _next_step_dir(self, rule_name: str) -> Path:
-        """
-        Returns the next numbered step directory path (not yet created).
-        """
-        existing_numbers = [0]
-        for h in self._history:
-            try:
-                # Extract '01' from 'steps/01_rule_name'
-                basename = Path(h["step_dir"]).name
-                existing_numbers.append(int(basename.split("_")[0]))
-            except ValueError:
-                pass
+            for path in last_rule["resolved_outputs"]:
+                if self._parallel_mode:
+                    target_lines.append(f"        expand('{path}', sample=SAMPLES),")
+                else:
+                    target_lines.append(f"        '{path}',")
+            parts.append("\n".join(target_lines))
 
-        next_num = max(existing_numbers) + 1
-        return self._steps_dir / f"{next_num:02d}_{rule_name}"
+        for r in self._rules:
+            parts.append(r["text"].strip())
 
-    def _append_rule(self, rule_text: str):
-        """
-        Appends a rule block to the accumulating Snakefile.
-        """
-        with open(self._snakefile_path, "a") as f:
-            f.write("\n\n")
-            f.write(rule_text)
-
-    def _snakefile_size(self) -> int:
-        """
-        Returns current Snakefile byte length, 0 if not yet created.
-        """
-        if self._snakefile_path.exists():
-            return self._snakefile_path.stat().st_size
-        return 0
+        self.snakefile_path.write_text("\n\n".join(parts))
 
     def _run_snakemake(self, targets: List[str], cores: int = 1) -> subprocess.CompletedProcess:
         """
@@ -356,7 +313,7 @@ class SnakemakeProvider(BaseProvider):
                 "--cores",
                 str(cores),
                 "--snakefile",
-                str(self._snakefile_path),
+                str(self.snakefile_path),
             ]
             + targets,
             capture_output=True,
@@ -364,150 +321,34 @@ class SnakemakeProvider(BaseProvider):
             cwd=SNAKEMAKE_WORK_DIR,
         )
 
-    def _resolve_input_paths(self, input: Dict[str, Any]) -> Dict[str, str]:
+    def _resolve_input_paths(self, input_data: Dict[str, Any]) -> Dict[str, str]:
         """
         Resolves input paths relative to WORK_DIR.
         Paths starting with 'steps/' are resolved relative to WORK_DIR.
         All other paths are assumed relative to WORK_DIR/input/.
         Supports list values for inputs that expect multiple files (e.g. index sets).
         """
-        resolved = {}
         work_p = Path(SNAKEMAKE_WORK_DIR)
-        for k, v in input.items():
-            if isinstance(v, list):
-                resolved_list = []
-                for item in v:
-                    item = str(item)
-                    if item.startswith("steps/"):
-                        resolved_list.append(str(work_p / item))
-                    else:
-                        resolved_list.append(str(work_p / "input" / item))
-                resolved[k] = resolved_list
-            else:
-                v = str(v)
-                if v.startswith("steps/"):
-                    resolved[k] = str(work_p / v)
+
+        def resolve_item(item):
+            item = str(item)
+            if item.startswith("steps/"):
+                return str(work_p / item)
+            return str(work_p / "input" / item)
+
+        if isinstance(input_data, dict):
+            resolved = {}
+            for k, v in input_data.items():
+                if isinstance(v, list):
+                    resolved[k] = [resolve_item(i) for i in v]
                 else:
-                    resolved[k] = str(work_p / "input" / v)
-        return resolved
+                    resolved[k] = resolve_item(v)
+            return resolved
 
-    def _rebuild_from_content(self, rules_to_keep: List[tuple[str, str]]):
-        """
-        Helper to rewrite the Snakefile and update internal history based
-        on a list of (rule_name, rule_text) blocks.
-        """
-        # Clear existing file
-        self._snakefile_path.write_text("")
+        if isinstance(input_data, list):
+            return [resolve_item(i) for i in input_data]
 
-        # We need to rebuild history.
-        # Note: This logic assumes the step directories already exist on disk.
-        new_history = []
-
-        for name, text in rules_to_keep:
-            pre_size = self._snakefile_size()
-            old_entry = next((h for h in self._history if h["rule_name"] == name), None)
-            if old_entry is None:
-                continue
-            with open(self._snakefile_path, "a") as f:
-                f.write("\n\n" + text.strip())
-            new_history.append(
-                {
-                    "rule_name": name,
-                    "step_dir": old_entry["step_dir"],
-                    "snakefile_bytes": pre_size,
-                }
-            )
-        self._history = new_history
-
-    @workflow_tool
-    def delete_rule(self, rule_name: str) -> Dict[str, Any]:
-        """
-        Removes a specific rule from the Snakefile by name.
-
-        Args:
-            rule_name (str): The name of the rule to delete.
-        Returns:
-            - success: True if the rule was found and removed.
-        """
-        if not self._snakefile_path.exists():
-            return {"success": False, "error": "Snakefile does not exist."}
-
-        content = self._snakefile_path.read_text()
-        # Split content into blocks starting with "rule "
-        # Use a simple split and filter to keep rule logic together
-        raw_blocks = content.split("\n\n")
-        new_blocks = []
-        found = False
-
-        for block in raw_blocks:
-            if block.strip().startswith(f"rule {rule_name}:"):
-                found = True
-                continue
-            if block.strip():
-                # Extract rule name for the rebuilder
-                name = block.strip().splitlines()[0].replace("rule ", "").replace(":", "").strip()
-                new_blocks.append((name, block))
-
-        if not found:
-            return {"success": False, "error": f"Rule '{rule_name}' not found."}
-
-        # Handle data deletion
-        entry = next((h for h in self._history if h["rule_name"] == rule_name), None)
-        if entry:
-            step_p = Path(SNAKEMAKE_WORK_DIR) / entry["step_dir"]
-            if step_p.exists():
-                shutil.rmtree(step_p)
-
-        self._rebuild_from_content(new_blocks)
-        return {"success": True, "message": f"Rule '{rule_name}' removed."}
-
-    @workflow_tool
-    def deduplicate_rules(self) -> Dict[str, Any]:
-        """
-        Parses the Snakefile and finds rules with duplicate names.
-        It keeps only the LAST occurrence of any duplicate rule and
-        removes the others. This is useful for cleaning up failed retries.
-
-        Returns:
-            - success: True if deduplication completed.
-            - removed_count: Number of duplicate rules removed.
-        """
-        if not self._snakefile_path.exists():
-            return {"success": True, "removed_count": 0}
-
-        content = self._snakefile_path.read_text()
-        raw_blocks = content.split("\n\n")
-
-        # Map rule_name -> last_seen_content
-        unique_rules = {}
-        order = []  # keep track of the first time we saw a rule to preserve order
-
-        count_before = 0
-        for block in raw_blocks:
-            clean = block.strip()
-            if not clean.startswith("rule "):
-                continue
-
-            count_before += 1
-            name = clean.splitlines()[0].replace("rule ", "").replace(":", "").strip()
-
-            if name not in unique_rules:
-                order.append(name)
-            unique_rules[name] = block
-
-        # Reconstruct blocks based on the order they first appeared
-        # but using the content of the last appearance.
-        final_blocks = [(name, unique_rules[name]) for name in order]
-
-        removed_count = count_before - len(final_blocks)
-        self._rebuild_from_content(final_blocks)
-
-        return {
-            "success": True,
-            "removed_count": removed_count,
-            "current_rule_count": len(final_blocks),
-            "message": f"Deduplication complete. Removed {removed_count} duplicate rules. View the snakefile to ensure required steps were not lost.",
-        }
+        return input_data
 
     def _resolve_output_paths(self, output: Dict[str, Any], step_dir: Path) -> Dict[str, str]:
         """
@@ -527,19 +368,23 @@ class SnakemakeProvider(BaseProvider):
         shared logic for adding rule lines (input or output)
         """
         lines.append(f"    {name}:")
-        for k, v in resolved.items():
-            if isinstance(v, list):
-                items = ", ".join(f'"{item}"' for item in v)
-                lines.append(f"        {k}=[{items}],")
-            else:
-                lines.append(f'        {k}="{v}",')
+        if isinstance(resolved, dict):
+            for k, v in resolved.items():
+                if isinstance(v, list):
+                    items = ", ".join(f'"{item}"' for item in v)
+                    lines.append(f"        {k}=[{items}],")
+                else:
+                    lines.append(f'        {k}="{v}",')
+        elif isinstance(resolved, list):
+            for item in resolved:
+                lines.append(f'        "{item}",')
         return lines
 
     def _build_rule_lines(
         self,
         rule_name: str,
-        input: Dict[str, Any],
-        output: Dict[str, Any],
+        inputs: Any,
+        output: Any,
         params: Optional[Dict[str, Any]],
         threads: int,
         log: Optional[str],
@@ -551,7 +396,7 @@ class SnakemakeProvider(BaseProvider):
         Supports list values for inputs and outputs that expect multiple files.
         """
         # Inputs and outputs
-        resolved_input = self._resolve_input_paths(input)
+        resolved_input = self._resolve_input_paths(inputs)
         resolved_output = self._resolve_output_paths(output, step_dir)
         lines = [f"rule {rule_name}:"]
         lines = self._add_rule_lines("input", resolved_input, lines)
@@ -581,48 +426,128 @@ class SnakemakeProvider(BaseProvider):
         cores: int = 1,
     ) -> Dict[str, Any]:
         """
-        Shared execution path for both execute_wrapper and execute_rule.
+        Structural execution path. Updates state, rebuilds Snakefile, and executes.
         """
-        existing_rule_names = [h["rule_name"] for h in self._history]
-        if rule_name in existing_rule_names or step_dir.exists():
-            return {
-                "success": False,
-                "error": f"Rule '{rule_name}' already exists. Pick a new name, or use delete_rule('{rule_name}') first.",
-            }
-
-        # Validate all resolved output paths
+        # Path Validation
+        all_resolved = []
         for v in resolved_output.values():
-            _, err = _validate_path(v, mode="write")
-            if err:
-                return {"success": False, "error": err}
+            paths = v if isinstance(v, list) else [v]
+            for p in paths:
+                _, err = _validate_path(p, mode="write")
+                if err:
+                    return {"success": False, "error": err}
+                all_resolved.append(p)
 
-        pre_append_size = self._snakefile_size()
+        # Update Internal State
+        new_rule = {
+            "name": rule_name,
+            "text": rule_text,
+            "step_dir": str(step_dir.relative_to(SNAKEMAKE_WORK_DIR)),
+            "resolved_outputs": all_resolved,
+        }
+        self._rules.append(new_rule)
+
+        # Prep Disk and Run
         step_dir.mkdir(parents=True, exist_ok=True)
-        self._append_rule(rule_text)
-        self._history.append(
-            {
-                "rule_name": rule_name,
-                "step_dir": str(step_dir.relative_to(SNAKEMAKE_WORK_DIR)),
-                "snakefile_bytes": pre_append_size,
-            }
-        )
+        self._rebuild_snakefile()
+        result = self._run_snakemake([], cores=cores)
 
-        targets = list(resolved_output.values())
-        result = self._run_snakemake(targets, cores=cores)
+        # Failure recovery
+        if result.returncode != 0:
+            self.delete_rule(rule_name)
 
-        if result.stdout:
-            print(result.stdout)
-        if result.stderr:
-            print(result.stderr)
         return {
             "success": result.returncode == 0,
             "returncode": result.returncode,
             "stdout": result.stdout,
             "stderr": result.stderr,
-            "auto_rolled_back": rule_name in existing_rule_names or step_dir.exists(),
-            "step_dir": str(step_dir.relative_to(SNAKEMAKE_WORK_DIR)),
+            "step_dir": new_rule["step_dir"],
             "work_dir_listing": _dir_listing(Path(SNAKEMAKE_WORK_DIR) / "steps"),
         }
+
+    @workflow_tool
+    def create_sample_sheet(self, samples: List[Dict[str, str]]) -> Dict[str, Any]:
+        """
+        Creates a samples.csv file from the provided csv data and automatically
+        injects the Python code into the Snakefile to load it. Call this for workflows with
+        multiple samples. After discovering data with list_input_dir. The first row MUST be
+        the header of the file.
+
+        Args:
+            samples (list of dict): A list of dictionaries representing the rows.
+                Example: [{"sample": "P19506_1005", "r1": "P19506_1005/R1.fastq", "r2": "P19506_1005/R2.fastq"}]
+                Every dictionary must have the exact same keys, and one key MUST be 'sample'
+                Paths should be relative to the input directory.
+
+        Returns:
+            Instructions on how to use the auto-generated variables (SAMPLES and samples_df)
+            in your subsequent execute_rule calls.
+        """
+        keys = list(samples[0].keys())
+        if "sample" not in keys:
+            return {"success": False, "error": "The keys must include 'sample'."}
+
+        # Write the csv and add to Snakefile
+        out_path = Path(SNAKEMAKE_WORK_DIR) / "input" / "samples.csv"
+        try:
+            with open(out_path, "w", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=keys)
+                writer.writeheader()
+                writer.writerows(samples)
+        except Exception as e:
+            return {"success": False, "error": f"Failed to write CSV: {e}"}
+
+        # This is currently the only thing we write here, so can just set
+        self._header = (
+            "import pandas as pd\n"
+            "samples_df = pd.read_csv('input/samples.csv').set_index('sample', drop=False)\n"
+            "SAMPLES = samples_df['sample'].tolist()"
+        )
+        self._parallel_mode = True
+        self._rebuild_snakefile()
+        return {"success": True, "message": "Sample sheet created and header updated."}
+
+    @workflow_tool
+    def delete_rule(self, rule_name: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Removes a specific rule from the Snakefile by name.
+        If rule_name is None, it removes the most recent rule (Rollback).
+        Args:
+            rule_name (str): The name of the rule to delete.
+        Returns:
+            success: True if the rule was found and removed.
+        """
+        if not self._rules:
+            return {"success": False, "error": "No rules exist to remove."}
+
+        # 1. Identify the target rule
+        if rule_name:
+            target_idx = next(
+                (i for i, r in enumerate(self._rules) if r["name"] == rule_name), None
+            )
+            if target_idx is None:
+                return {"success": False, "error": f"Rule '{rule_name}' not found in history."}
+            rule_to_remove = self._rules.pop(target_idx)
+        else:
+            rule_to_remove = self._rules.pop()
+
+        # Filesystem Cleanup
+        step_dir_rel = rule_to_remove["step_dir"]
+        step_path = (Path(SNAKEMAKE_WORK_DIR) / step_dir_rel).resolve()
+        workdir_p = Path(SNAKEMAKE_WORK_DIR).resolve()
+        input_p = (workdir_p / "input").resolve()
+
+        # Safety: Ensure we are inside work_dir/steps/ and NOT deleting the root or input
+        try:
+            if step_path.exists() and step_path.is_relative_to(workdir_p / "steps"):
+                if step_path != workdir_p and step_path != input_p:
+                    shutil.rmtree(step_path)
+        except Exception as e:
+            print(f"Warning: Could not delete directory {step_path}: {e}")
+
+        # Synchronize State
+        self._rebuild_snakefile()
+        return {"success": True, "rule_name": rule_to_remove["name"], "step_dir": step_dir_rel}
 
     @workflow_tool
     def get_environment(self) -> Dict[str, Any]:
@@ -668,11 +593,8 @@ class SnakemakeProvider(BaseProvider):
                 ),
             },
             "wrapper_version": SNAKEMAKE_WRAPPER_VERSION,
-            "steps_completed": len(self._history),
-            "history": [
-                {"step": i + 1, "rule_name": h["rule_name"], "step_dir": h["step_dir"]}
-                for i, h in enumerate(self._history)
-            ],
+            "steps_completed": len(self.history),
+            "history": self.history,
             "available": self.available,
         }
 
@@ -728,10 +650,7 @@ class SnakemakeProvider(BaseProvider):
             "success": True,
             "root": "steps/",
             "items": _dir_listing(steps_dir),
-            "history": [
-                {"step": i + 1, "rule_name": h["rule_name"], "step_dir": h["step_dir"]}
-                for i, h in enumerate(self._history)
-            ],
+            "history": self.history,
         }
 
     @workflow_tool
@@ -817,13 +736,29 @@ class SnakemakeProvider(BaseProvider):
 
         return {"success": True, **entry}
 
+    def _next_step_dir(self, rule_name: str) -> Path:
+        """
+        Returns the next numbered step directory path (not yet created).
+        """
+        existing_numbers = [0]
+        for r in self._rules:
+            try:
+                # Extract '01' from 'steps/01_rule_name'
+                basename = Path(r["step_dir"]).name
+                existing_numbers.append(int(basename.split("_")[0]))
+            except (ValueError, IndexError):
+                pass
+
+        next_num = max(existing_numbers) + 1
+        return self._steps_dir / f"{next_num:02d}_{rule_name}"
+
     @workflow_tool
     def execute_wrapper(
         self,
         rule_name: str,
         wrapper_path: str,
-        input: Dict[str, Any],
-        output: Dict[str, Any],
+        inputs: Any,
+        output: Any,
         params: Optional[Dict[str, Any]] = None,
         threads: int = 1,
         cores: int = 1,
@@ -838,27 +773,31 @@ class SnakemakeProvider(BaseProvider):
         {SHARED_EXECUTE_DOCSTRING}
 
         Always check 'success' before proceeding to the next step.
-        Use rollback_step to undo this step if you want to retry with
-        different arguments.
         """
-        # Strip the version prefix if the agent accidentally included it
-        wrapper_prefix = f"{SNAKEMAKE_WRAPPER_VERSION}/"
-        if wrapper_path.startswith(wrapper_prefix):
-            wrapper_path = wrapper_path[len(wrapper_prefix) :]
+        if not self.available:
+            return {"success": False, "error": "Snakemake provider is not available."}
 
-        # Also catch hardcoded master/ branch
-        # TODO can this be other branches? Can we count "/" instead?
-        if wrapper_path.startswith("master/"):
-            wrapper_path = wrapper_path[7:]
+        # Strip the version prefix if the agent accidentally included it
+        for prefix in [f"{SNAKEMAKE_WRAPPER_VERSION}/", "master/"]:
+            if wrapper_path.startswith(prefix):
+                wrapper_path = wrapper_path[len(prefix) :]
 
         entry = self._index.get(wrapper_path)
         if not entry:
             return {"success": False, "error": f"Wrapper '{wrapper_path}' not found in index."}
 
+        # Check against source of truth (self._rules)
+        if any(r["name"] == rule_name for r in self._rules):
+            return {
+                "success": False,
+                "error": f"Rule '{rule_name}' already exists. Pick a new name, or use delete_rule('{rule_name}') first.",
+            }
+
         step_dir = self._next_step_dir(rule_name)
         lines, resolved_output = self._build_rule_lines(
-            rule_name, input, output, params, threads, log, step_dir
+            rule_name, inputs, output, params, threads, log, step_dir
         )
+
         directive = "meta_wrapper" if entry["type"] == "meta_wrapper" else "wrapper"
         lines.append(f'    {directive}: "{SNAKEMAKE_WRAPPER_VERSION}/{wrapper_path}"')
         rule_text = "\n".join(lines)
@@ -869,8 +808,8 @@ class SnakemakeProvider(BaseProvider):
     def execute_rule(
         self,
         rule_name: str,
-        input: Dict[str, Any],
-        output: Dict[str, Any],
+        inputs: Any,
+        output: Any,
         params: Optional[Dict[str, Any]] = None,
         threads: int = 1,
         cores: int = 1,
@@ -878,6 +817,7 @@ class SnakemakeProvider(BaseProvider):
         shell: Optional[str] = None,
         run: Optional[str] = None,
         script: Optional[str] = None,
+        conda_packages: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         f"""
         Executes a single custom workflow step written by the agent. Use this
@@ -905,11 +845,11 @@ class SnakemakeProvider(BaseProvider):
                 automatically. Exactly one of shell, run, or script must
                 be provided.
 
+            conda_packages (list, optional): list of conda package names.
+
             {SHARED_EXECUTE_DOCSTRING}
 
         Always check 'success' before proceeding to the next step.
-        Use rollback_step to undo this step if you want to retry with
-        different arguments.
         """
         if not self.available:
             return {"success": False, "error": "Snakemake provider is not available."}
@@ -921,10 +861,21 @@ class SnakemakeProvider(BaseProvider):
                 "error": "Exactly one of 'shell', 'run', or 'script' must be provided.",
             }
 
+        # Check against source of truth (self._rules)
+        if any(r["name"] == rule_name for r in self._rules):
+            return {
+                "success": False,
+                "error": f"Rule '{rule_name}' already exists. Pick a new name, or use delete_rule('{rule_name}') first.",
+            }
+
         step_dir = self._next_step_dir(rule_name)
         lines, resolved_output = self._build_rule_lines(
-            rule_name, input, output, params, threads, log, step_dir
+            rule_name, inputs, output, params, threads, log, step_dir
         )
+
+        if conda_packages:
+            env_yaml_path = self.write_conda_environment(step_dir, conda_packages)
+            lines.append(f'    conda: "{env_yaml_path.relative_to(SNAKEMAKE_WORK_DIR)}"')
 
         if shell is not None:
             lines.append(f'    shell: "{shell}"')
@@ -949,11 +900,11 @@ class SnakemakeProvider(BaseProvider):
           - content (str): The full text of the Snakefile
           - rule_count (int): Number of rules currently defined
         """
-        if not self._snakefile_path.exists():
+        if not self.snakefile_path.exists():
             return {"success": True, "content": "", "rule_count": 0}
 
         try:
-            content = self._snakefile_path.read_text()
+            content = self.snakefile_path.read_text()
             # Basic count by looking for the "rule " keyword at the start of lines
             rule_count = len(
                 [line for line in content.splitlines() if line.strip().startswith("rule ")]
@@ -962,53 +913,30 @@ class SnakemakeProvider(BaseProvider):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def write_conda_environment(self, step_dir, packages):
+        """
+        Write one or more conda packages to a step directory.
+        """
+        step_dir.mkdir(parents=True, exist_ok=True)
+        path = step_dir / "env.yaml"
+        env_content = {
+            "channels": ["conda-forge", "bioconda", "nodefaults"],
+            "dependencies": packages,
+        }
+        utils.write_yaml(env_content, path)
+        return path
+
+    def rule_exists(self, step_dir, rule_name):
+        """
+        Shared function to determine if a rule exists.
+        """
+        existing_rule_names = [h["rule_name"] for h in self.history]
+        return rule_name in existing_rule_names or step_dir.exists()
+
     def rollback_step(self) -> Dict[str, Any]:
         """
         Rolls back the most recently executed step. Removes the step's output
         directory from WORK_DIR/steps/, truncates the Snakefile to remove the
         appended rule, and pops the step from history.
-
-        Takes no arguments. Always rolls back exactly one step (the most recent).
-
-        By default, when a step fails, we roll back for you. You must ONLY call
-        this tool when you want an additional rollback. Use this when you want to
-        redo a step that was not rolled back. You MUST inspect the Snakefile to
-        confirm first.
-
-        Returns a dictionary containing:
-          - success (bool): True if rollback completed successfully
-          - rolled_back (str): rule_name of the step that was removed
-          - step_dir_removed (str): the step directory that was deleted,
-            relative to WORK_DIR
-          - snakefile_truncated_to_bytes (int): Snakefile size after truncation
-          - steps_remaining (int): number of steps still in history
-          - history: updated ordered list of remaining steps
         """
-        if not self._history:
-            return {"success": False, "error": "No steps to roll back."}
-
-        entry = self._history.pop()
-        rule_name = entry["rule_name"]
-        step_dir = Path(SNAKEMAKE_WORK_DIR) / entry["step_dir"]
-        pre_size = entry["snakefile_bytes"]
-
-        # Remove step output directory
-        if step_dir.exists():
-            shutil.rmtree(step_dir)
-
-        # Truncate Snakefile back to pre-append size
-        if self._snakefile_path.exists():
-            with open(self._snakefile_path, "r+") as f:
-                f.truncate(pre_size)
-
-        return {
-            "success": True,
-            "rolled_back": rule_name,
-            "step_dir_removed": str(entry["step_dir"]),
-            "snakefile_truncated_to_bytes": pre_size,
-            "steps_remaining": len(self._history),
-            "history": [
-                {"step": i + 1, "rule_name": h["rule_name"], "step_dir": h["step_dir"]}
-                for i, h in enumerate(self._history)
-            ],
-        }
+        return self.delete_rule(None)
