@@ -19,10 +19,24 @@ class PBSProvider(WorkloadProviderBase):
 
     def probe(self) -> bool:
         """
-        Checks for qsub and ensures it is not a Cobalt environment.
+        Checks for qsub and ensures it is not a Cobalt or SGE/OCS/GCS
+        environment.
+
+        TODO: this probe is over-permissive. Any qsub on PATH passes today,
+        which would false-positive on OCS/GCS hosts where qsub belongs to the
+        SGE family. As a workaround we exclude SGE_ROOT and COBALT_JOBID
+        environments. A proper fix should require a PBS-specific signal
+        (e.g. PBS_SERVER env, presence of pbs_server / pbsnodes binaries,
+        or a successful 'qstat --version' identifying PBS).
         """
         self.bin_path = shutil.which("qsub")
-        return self.bin_path is not None and "COBALT_JOBID" not in os.environ
+        if not self.bin_path:
+            return False
+        if "COBALT_JOBID" in os.environ:
+            return False
+        if os.environ.get("SGE_ROOT"):
+            return False
+        return True
 
     @property
     def metadata(self) -> Dict[str, Any]:
