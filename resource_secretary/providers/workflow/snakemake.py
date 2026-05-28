@@ -321,47 +321,31 @@ class SnakemakeProvider(BaseProvider):
             cwd=SNAKEMAKE_WORK_DIR,
         )
 
+    def _apply_path_resolution(self, data: Any, resolver_func) -> Any:
+        """
+        Recursively traverses dicts/lists to apply a resolution function to path strings.
+        """
+        if isinstance(data, dict):
+            return {k: self._apply_path_resolution(v, resolver_func) for k, v in data.items()}
+        if isinstance(data, list):
+            return [self._apply_path_resolution(i, resolver_func) for i in data]
+        return resolver_func(str(data))
+
     def _resolve_input_paths(self, input_data: Dict[str, Any]) -> Dict[str, str]:
         """
-        Resolves input paths relative to WORK_DIR.
-        Paths starting with 'steps/' are resolved relative to WORK_DIR.
-        All other paths are assumed relative to WORK_DIR/input/.
-        Supports list values for inputs that expect multiple files (e.g. index sets).
+        Resolve inputs relative to snakemake working directory
         """
-        work_p = Path(SNAKEMAKE_WORK_DIR)
-
-        def resolve_item(item):
-            item = str(item)
+        work_p = Path(SNAKEMAKE_WORK_DIR)        
+        def input_resolver(item: str):
             if item.startswith("steps/"):
                 return str(work_p / item)
             return str(work_p / "input" / item)
 
-        if isinstance(input_data, dict):
-            resolved = {}
-            for k, v in input_data.items():
-                if isinstance(v, list):
-                    resolved[k] = [resolve_item(i) for i in v]
-                else:
-                    resolved[k] = resolve_item(v)
-            return resolved
-
-        if isinstance(input_data, list):
-            return [resolve_item(i) for i in input_data]
-
-        return input_data
+        return self._apply_path_resolution(input_data, input_resolver)
 
     def _resolve_output_paths(self, output: Dict[str, Any], step_dir: Path) -> Dict[str, str]:
-        """
-        Resolves output paths relative to the step's output directory.
-        Supports list values for outputs that produce multiple files.
-        """
-        resolved = {}
-        for k, v in output.items():
-            if isinstance(v, list):
-                resolved[k] = [str(step_dir / str(item)) for item in v]
-            else:
-                resolved[k] = str(step_dir / str(v))
-        return resolved
+        return self._apply_path_resolution(output, lambda item: str(step_dir / item))
+
 
     def _add_rule_lines(self, name, resolved, lines):
         """
