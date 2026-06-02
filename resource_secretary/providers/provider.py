@@ -16,6 +16,7 @@ def _base_tool_decorator(func: Callable, category: str):
 
     # Attach categorical metadata
     wrapper.is_tool = True
+
     # Right now this can be secretary or dispatch
     wrapper.tool_category = category
 
@@ -52,7 +53,6 @@ def _base_tool_decorator(func: Callable, category: str):
 
 def secretary_tool(func: Callable):
     """
-    Labels a method as a tool for discovery and status retrieval.
     Used by the secretary agent primarily. We don't want the secretary to make
     system changes, it's like read only.
     """
@@ -61,10 +61,16 @@ def secretary_tool(func: Callable):
 
 def dispatch_tool(func: Callable):
     """
-    Labels a method as a tool for actions and state changes.
     Used by the dispatcher agent to actually interact with a system (submit, cancel, etc).
     """
     return _base_tool_decorator(func, "dispatch")
+
+
+def workflow_tool(func: Callable):
+    """
+    Used by the workflow agent to execute workflow steps.
+    """
+    return _base_tool_decorator(func, "workflow")
 
 
 class BaseProvider:
@@ -77,6 +83,10 @@ class BaseProvider:
     """
 
     is_provider = True
+
+    # A catalog needs to be requested on demand, usually because
+    # it requires additional work at probe (e.g., snakemake wrappers)
+    is_catalog = False
 
     def __init__(self, *args, **kwargs):
         self.tools: Dict[str, Callable] = {}

@@ -44,7 +44,14 @@ def find_provider_classes(root_path=None):
                         yield category, obj
 
 
-def discover_providers(probe=True, path=None) -> Dict[str, List[BaseProvider]]:
+def discover_catalogs(probe=True, path=None):
+    """
+    Discover catalogs, user specific and asked for groups of tools.
+    """
+    return discover_providers(probe=probe, path=path, is_catalog=True)
+
+
+def discover_providers(probe=True, path=None, is_catalog=False) -> Dict[str, List[BaseProvider]]:
     """
     Recursively discovers and probes providers in subdirectories.
     Returns a dictionary categorized by the subdirectory name.
@@ -61,6 +68,9 @@ def discover_providers(probe=True, path=None) -> Dict[str, List[BaseProvider]]:
         # that might have accidentally left is_provider=True
         try:
             instance = cls()
+            # Loading catalogs or not
+            if instance.is_catalog != is_catalog:
+                continue
             instance.category = category
             if not probe or instance.probe():
                 if category not in catalog:
