@@ -1,14 +1,15 @@
 import os
+import shlex
 import shutil
 from typing import Any, Dict, Optional
 
-from ..provider import secretary_tool
+from ..provider import dispatch_tool, secretary_tool
 from .workload import WorkloadProviderBase
 
 
 class OpenClusterSchedulerProvider(WorkloadProviderBase):
     """
-    Handles discovery and status for the SGE-family schedulers:
+    Handles discovery and status for the SGE-family schedulers.
     Open Cluster Scheduler (OCS) and Gridware Cluster Scheduler (GCS),
     both descendants of Sun Grid Engine. They share the same CLI surface
     (qsub, qstat, qhost, qconf, qacct) and the same SGE_ROOT/SGE_CELL
@@ -23,6 +24,11 @@ class OpenClusterSchedulerProvider(WorkloadProviderBase):
 
     is_provider = True
 
+    def __init__(self):
+        super().__init__()
+        self.qconf: Optional[str] = None
+        self.qhost: Optional[str] = None
+
     @property
     def name(self) -> str:
         return "ocs"
@@ -31,12 +37,14 @@ class OpenClusterSchedulerProvider(WorkloadProviderBase):
         """
         Returns True only when qsub and qconf are on PATH and SGE_ROOT is set.
         Leaves bin_path unset on PBS/Torque/Cobalt hosts so metadata cannot
-        falsely advertise OCS based on a foreign qsub.
+        falsely advertise OCS based on a foreign qsub. Caches the qconf and
+        qhost paths so the secretary tools can reference them directly.
         """
         qsub = shutil.which("qsub")
-        has_qconf = shutil.which("qconf") is not None
+        self.qconf = shutil.which("qconf")
+        self.qhost = shutil.which("qhost")
         has_sge_root = bool(os.environ.get("SGE_ROOT"))
-        if qsub and has_qconf and has_sge_root:
+        if qsub and self.qconf and has_sge_root:
             self.bin_path = qsub
             return True
         self.bin_path = None
@@ -75,21 +83,11 @@ class OpenClusterSchedulerProvider(WorkloadProviderBase):
             },
             "modifiers": {
                 "cwd": {
-                    "type": "manager",
-                    "flag": "-cwd",
+                    "metadata": {"type": "manager", "flag": "-cwd"},
                     "variants": {
                         "exact": "with the -cwd flag",
                         "verbatim": "passing -cwd to qsub",
                         "descriptive": "running in the current working directory",
-                    },
-                },
-                "merge_output": {
-                    "type": "manager",
-                    "flag": "-j y",
-                    "variants": {
-                        "exact": "with the -j y flag",
-                        "verbatim": "passing -j y to qsub",
-                        "descriptive": "merging stderr into stdout",
                     },
                 },
             },
@@ -114,16 +112,43 @@ class OpenClusterSchedulerProvider(WorkloadProviderBase):
         return self.run_workload_cmd(cmd)
 
     @secretary_tool
-    def get_host_status(self) -> str:
+    def get_host_status(self, full: bool = False) -> str:
         """
         Retrieves execution host status (qhost): CPU, memory, load per host.
+
+        Inputs:
+            full (bool): If True, adds -F to show all resource availability
+                 (complexes/consumables like memory, slots, GPUs) per host.
 
         Returns:
             str: Output of 'qhost'. Use this to see physical capacity and
                  current load before proposing a job.
         """
-        tool = shutil.which("qhost")
-        return self.run_workload_cmd([tool]) if tool else "qhost not found"
+        if not self.qhost:
+            return "qhost not found"
+        cmd = [self.qhost]
+        if full:
+            cmd.append("-F")
+        return self.run_workload_cmd(cmd)
+
+    @secretary_tool
+    def get_queues(self, queue: Optional[str] = None) -> str:
+        """
+        Lists cluster queues (qconf -sql) or shows one queue in detail (qconf -sq).
+
+        Inputs:
+            queue (str): Optional queue name. When given, returns the full queue
+                 configuration (slots, hostlist, pe_list, limits) instead of the list.
+
+        Returns:
+            str: Queue names, or the detailed configuration of the requested
+                 queue. Use this to find a valid queue and check its slots and
+                 parallel environments before proposing a job.
+        """
+        if not self.qconf:
+            return "qconf not found"
+        cmd = [self.qconf, "-sq", queue] if queue else [self.qconf, "-sql"]
+        return self.run_workload_cmd(cmd)
 
     @secretary_tool
     def get_cluster_config(self) -> str:
@@ -134,8 +159,11 @@ class OpenClusterSchedulerProvider(WorkloadProviderBase):
             str: The global SGE/OCS configuration. Use this to inspect
                  scheduler defaults, max user jobs, and other policy.
         """
-        tool = shutil.which("qconf")
-        return self.run_workload_cmd([tool, "-sconf", "global"]) if tool else "qconf not found"
+        return (
+            self.run_workload_cmd([self.qconf, "-sconf", "global"])
+            if self.qconf
+            else "qconf not found"
+        )
 
     @secretary_tool
     def get_parallel_environments(self) -> str:
@@ -146,5 +174,33 @@ class OpenClusterSchedulerProvider(WorkloadProviderBase):
             str: Names of parallel environments. Required to pick a valid
                  `-pe` argument for job submission.
         """
-        tool = shutil.which("qconf")
-        return self.run_workload_cmd([tool, "-spl"]) if tool else "qconf not found"
+        return self.run_workload_cmd([self.qconf, "-spl"]) if self.qconf else "qconf not found"
+
+    @dispatch_tool
+    def submit_job(self, arguments: str) -> str:
+        """
+        Submits a job with qsub. Provide the full qsub command line after the
+        binary, e.g. '-b y -cwd -pe mpi 4 lmp -in in.reaxff'. Binaries need
+        '-b y'; without it qsub treats the trailing argument as a script path.
+
+        Inputs:
+            arguments (str): Everything after 'qsub' as one string: flags
+                 (-pe, -q, -cwd, -j y, -N, ...) followed by the command or
+                 script to run.
+
+        Returns:
+            str: qsub output. On success it contains the job ID
+                 ('Your job <id> ...'); keep the ID to query or cancel later.
+        """
+        if not self.bin_path:
+            return "qsub not found"
+        try:
+            args = shlex.split(arguments)
+        except ValueError as e:
+            return f"Could not parse qsub arguments: {e}"
+        # Agents often paste the full command line including the binary itself
+        if args and os.path.basename(args[0]) == "qsub":
+            args = args[1:]
+        if not args:
+            return "No qsub arguments given. Provide flags and the command to run."
+        return self.run_workload_cmd([self.bin_path] + args)
