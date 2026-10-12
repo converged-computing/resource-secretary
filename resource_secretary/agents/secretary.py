@@ -39,7 +39,6 @@ class SecretaryAgent:
         """
         self.select_max_attempts = int(os.environ.get("MCP_SERVER_SELECT_MAX_ATTEMPTS") or 10)
         self.negotiate_max_attempts = int(os.environ.get("MCP_SERVER_NEGOTIATE_MAX_ATTEMPTS") or 10)
-        self.submit_max_attempts = int(os.environ.get("MCP_SERVER_SUBMIT_MAX_ATTEMPTS") or 10)
 
     def build_system_context(self, tool_types) -> str:
         """
@@ -56,7 +55,6 @@ class SecretaryAgent:
         table.add_column("Call Syntax", style="green")
 
         for provider in self.providers:
-            # Important: only for the secretary, not dispatch (control)
             tools = provider.discover_tools(tool_types)
 
             context += f"\nPROVIDER: {provider.name}\n"
@@ -97,7 +95,7 @@ class SecretaryAgent:
             return f"Error: Function '{func_name}' not found."
 
         console.print(
-            f"  [bold yellow]↳ DISPATCHING:[/bold yellow] {provider_name}.{func_name}({args})"
+            f"  [bold yellow]↳ CALLING:[/bold yellow] {provider_name}.{func_name}({args})"
         )
 
         try:
@@ -191,50 +189,6 @@ class SecretaryAgent:
 
         return "TIMEOUT"
 
-    async def submit(self, request: str) -> str:
-        """
-        Execution. Transforms a request into a concrete job,
-        submits it, and verifies success.
-        """
-        system_context = self.build_system_context(["secretary", "dispatch"])
-        instructions = (
-            f"{system_context}\n"
-            "### EXECUTION PROTOCOL ###\n"
-            "1. TRANSLATE: Convert the user's textual request into a submission call.\n"
-            "2. You MUST use tool calls to submit, get info, etc..\n"
-            "       Format: CALL: provider.function(arg=val)\n"
-            "3. NO GENERIC/INTERACTIVE CHAT: Do not explain HOW to use software. You CANNOT ask questions.\n"
-            "4. BE HONEST: No faking submit or check. You MUST use CALL to submit, verify, and get info.\n"
-            "5. FORBIDDEN: Under no conditions should you touch jobs not related to this task.\n"
-            "6. VERIFY: After submission, YOU MUST verify the job is running at least 10 seconds AND has not errored.\n"
-            "    You MUST look at the log and then status to verify no error has occurred.\n"
-            "    If the user provides an expectation, you MUST check for the condition and retry if it is not met.\n"
-            "7. You MUST verify a REAL job ID.\n"
-            "8. You MUST make an effort to RETRY if there is error due to the submit command or flags.\n"
-            "10. You MUST NOT remove user-specified application variables.\n"
-            "11. FINAL RESULT: You MUST start with 'FINAL RESULT:'. Detail what was done.\n"
-            "12. RECEIPT: Include a JSON block at the end with:\n"
-            "   - 'status': (SUCCESS or FAILED)\n"
-            "   - 'job_id': The cluster-specific job identifier returned by a tool CALL.\n"
-            "   - 'spec': The final command or script used for submission.\n"
-            "   - 'reasoning': A summary of the execution steps.\n"
-            "\n"
-            "Example format:\n"
-            "FINAL RESULT: Successfully submitted to the queue.\n"
-            "```json\n"
-            "{\n"
-            '  "status": "SUCCESS",\n'
-            '  "job_id": "flux-1234",\n'
-            '  "spec": "flux submit -n 4 lammps -i input.in",\n'
-            '  "reasoning": "Verified job state in queue via flux jobs."\n'
-            "}\n"
-            "```"
-        )
-        # Require at least 2 calls - submit and info
-        return await self.deliberate(
-            f"EXECUTE REQUEST: {request}", instructions, 2, max_attempts=self.submit_max_attempts
-        )
-
     async def select(self, request: str, proposals: Dict[str, Any], metadata: str = None) -> str:
         """
         Select a job given a set of contender clusters. This is typically run after negotiate,
@@ -270,7 +224,7 @@ class SecretaryAgent:
             "```"
         )
         if metadata:
-            instruction += "\n" + metadata
+            instructions += "\n" + metadata
 
         request = (
             f"ORIGINAL USER REQUEST: '{request}'\n\n"

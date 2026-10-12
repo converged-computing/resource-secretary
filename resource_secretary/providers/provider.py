@@ -1,6 +1,6 @@
 import functools
 import inspect
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict
 
 
 def _base_tool_decorator(func: Callable, category: str):
@@ -16,7 +16,7 @@ def _base_tool_decorator(func: Callable, category: str):
 
     # Attach categorical metadata
     wrapper.is_tool = True
-    # Right now this can be secretary or dispatch
+    # The category an agent asks for in discover_tools; the secretary is read only.
     wrapper.tool_category = category
 
     # Force metadata to basic types to avoid proxy/object issues
@@ -59,14 +59,6 @@ def secretary_tool(func: Callable):
     return _base_tool_decorator(func, "secretary")
 
 
-def dispatch_tool(func: Callable):
-    """
-    Labels a method as a tool for actions and state changes.
-    Used by the dispatcher agent to actually interact with a system (submit, cancel, etc).
-    """
-    return _base_tool_decorator(func, "dispatch")
-
-
 class BaseProvider:
     """
     BaseProvider is that - a base provider class. Note that we set is_provider by default
@@ -99,16 +91,13 @@ class BaseProvider:
         """
         return {}
 
-    def discover_tools(
-        self, tool_types: list = ["secretary", "dispatch"]
-    ) -> Dict[str, Dict[str, Any]]:
+    def discover_tools(self, tool_types: list = ["secretary"]) -> Dict[str, Dict[str, Any]]:
         """
-        Scans provider methods for tool decorators matching the specified tool_type.
+        Scans provider methods for tool decorators matching the specified tool types.
 
         Args:
-            tool_type: The category of tools to discover.
-                       Defaults to "secretary" (observation/read-only).
-                       Set to "dispatch" for action/write tools.
+            tool_types: The categories of tools to discover. Defaults to
+                        "secretary" (observation/read-only).
 
         Returns:
             Dict mapping tool names to their manifest (description, parameters, handler).

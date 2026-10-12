@@ -1,9 +1,8 @@
 import os
-import shlex
 import shutil
 from typing import Any, Dict, Optional
 
-from ..provider import dispatch_tool, secretary_tool
+from ..provider import secretary_tool
 from .workload import WorkloadProviderBase
 
 
@@ -175,32 +174,3 @@ class OpenClusterSchedulerProvider(WorkloadProviderBase):
                  `-pe` argument for job submission.
         """
         return self.run_workload_cmd([self.qconf, "-spl"]) if self.qconf else "qconf not found"
-
-    @dispatch_tool
-    def submit_job(self, arguments: str) -> str:
-        """
-        Submits a job with qsub. Provide the full qsub command line after the
-        binary, e.g. '-b y -cwd -pe mpi 4 lmp -in in.reaxff'. Binaries need
-        '-b y'; without it qsub treats the trailing argument as a script path.
-
-        Inputs:
-            arguments (str): Everything after 'qsub' as one string: flags
-                 (-pe, -q, -cwd, -j y, -N, ...) followed by the command or
-                 script to run.
-
-        Returns:
-            str: qsub output. On success it contains the job ID
-                 ('Your job <id> ...'); keep the ID to query or cancel later.
-        """
-        if not self.bin_path:
-            return "qsub not found"
-        try:
-            args = shlex.split(arguments)
-        except ValueError as e:
-            return f"Could not parse qsub arguments: {e}"
-        # Agents often paste the full command line including the binary itself
-        if args and os.path.basename(args[0]) == "qsub":
-            args = args[1:]
-        if not args:
-            return "No qsub arguments given. Provide flags and the command to run."
-        return self.run_workload_cmd([self.bin_path] + args)

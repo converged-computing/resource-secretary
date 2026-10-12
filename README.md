@@ -79,7 +79,6 @@ This library will be used by agents and secretaries. You can also run it locally
 
 We currently expose the maximum number of attempts that each provider is allowed to make.
 
-- `MCP_SERVER_SUBMIT_MAX_ATTEMPTS`: 10
 - `MCP_SERVER_NEGOTIATE_MAX_ATTEMPTS`: 10
 - `MCP_SERVER_SELECT_MAX_ATTEMPTS`: 10
 
@@ -158,6 +157,10 @@ Tool Discovery (Agent Visibility)
  • singularity: list_cache
 ```
 
+### Dispatch
+
+Submitting, monitoring and cancelling jobs is [flux-secretary](https://github.com/converged-computing/flux-secretary), which runs next to the application. The resource secretary only observes a system and reports whether it can take work, so its providers expose read-only `secretary_tool`s.
+
 ### Workflows
 
 Designing and running a workflow toward a goal (for example a Snakemake workflow from the snakemake-wrappers catalog) is a separate agent, [workflow-secretary](https://github.com/converged-computing/workflow-secretary). The resource secretary only reports what a system provides.
@@ -186,7 +189,7 @@ resource-secretary prompt lammps --show-count --manager flux --level exact
 
 ## TODO
 
-- I'd like a unified prompt generator interface between negotiation/selection/dispatch.
+- I'd like a unified prompt generator interface between negotiation and selection.
 
 
 ## License
