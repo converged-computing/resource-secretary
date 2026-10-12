@@ -1,3 +1,4 @@
+import hashlib
 import importlib
 import inspect
 import logging
@@ -24,7 +25,9 @@ def discover_mock_providers(
     We require the worker id and archetype because discovery
     depends on those things.
     """
-    seed = abs(hash(worker_id))
+    # A stable seed: hash() of a str changes between processes (PYTHONHASHSEED),
+    # and the same worker id must always discover the same cluster.
+    seed = int(hashlib.sha256(worker_id.encode()).hexdigest()[:16], 16)
     rng = random.Random(seed)
 
     # Select the archetype (this is like an identity to inform randomization / state)
@@ -93,7 +96,6 @@ def get_mock_providers(categories=None):
     worker_providers = {}
     archetype = archetypes.get("hpc", HPCArchetype)()
     config = MockConfig(0, archetype)
-    print(class_catalog)
 
     # Each archetype knows its own slots (min/max/choices)
     for category, classes in class_catalog.items():

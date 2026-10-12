@@ -1,7 +1,6 @@
-import random
-from typing import Any, Dict, List
+from typing import Any, Dict
 
-from ...provider import dispatch_tool, secretary_tool
+from ...provider import secretary_tool
 from ..base import MockBaseProvider
 
 
@@ -92,11 +91,6 @@ class MockFluxProvider(MockBaseProvider):
         Returns active configuration for the Fluxion scheduler.
         """
         return {"match-format": "v1", "policy": "easy-backfill", "traverser": "fcfs"}
-
-    @dispatch_tool
-    def submit_job(self, command: List[str], **kwargs) -> Dict[str, Any]:
-        rng = self.config.get_rng("flux_dispatch")
-        return {"success": True, "job_id": rng.randint(10000, 99999), "uri": "local://mock-flux"}
 
     def export_truth(self) -> Dict[str, Any]:
         """

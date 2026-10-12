@@ -2,7 +2,7 @@ import os
 import subprocess
 from typing import Annotated, Any, Dict, List, Optional
 
-from ..provider import BaseProvider, dispatch_tool, secretary_tool
+from ..provider import BaseProvider, secretary_tool
 
 
 class SoftwareProvider(BaseProvider):
@@ -29,7 +29,6 @@ class SoftwareProvider(BaseProvider):
         return {"available": True}
 
     @secretary_tool
-    @dispatch_tool
     def get_command_help(
         self,
         binary_path: Annotated[
